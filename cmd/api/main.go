@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/yourorg/urlshortener/internal/config"
+	"github.com/yourorg/urlshortener/internal/db"
 	"github.com/yourorg/urlshortener/internal/handlers"
 	"github.com/yourorg/urlshortener/internal/redis"
 )
@@ -17,6 +18,12 @@ func main() {
 
 	rdb := redis.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	defer rdb.Close()
+
+	linkStore, err := db.NewPrismaStore()
+	if err != nil {
+		log.Fatalf("failed to connect to Postgres via Prisma: %v", err)
+	}
+	defer linkStore.Close()
 
 	app := fiber.New(fiber.Config{
 		AppName:      "urlshortener",
@@ -29,17 +36,11 @@ func main() {
 	health := handlers.NewHealthHandler(rdb)
 	app.Get("/health", health.Check)
 
-	// Placeholder routes — wired up properly in Phase 1
-	app.Post("/api/shorten", func(c *fiber.Ctx) error {
-		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-			"message": "coming in Phase 1",
-		})
-	})
-	app.Get("/:shortCode", func(c *fiber.Ctx) error {
-		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-			"message": "coming in Phase 1",
-		})
-	})
+	shorten := handlers.NewShortenHandler(linkStore, rdb, cfg.BaseURL)
+	app.Post("/api/shorten", shorten.Shorten)
+
+	redirect := handlers.NewRedirectHandler(linkStore, rdb)
+	app.Get("/:shortCode", redirect.Redirect)
 
 	log.Printf("starting urlshortener on :%s (env=%s)", cfg.Port, cfg.Env)
 	if err := app.Listen(":" + cfg.Port); err != nil {

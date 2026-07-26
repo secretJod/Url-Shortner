@@ -8,13 +8,21 @@ Go + Fiber + Prisma + PostgreSQL + Redis. See `PROJECT_OVERVIEW.md` for full arc
 cp .env.example .env
 docker-compose up -d postgres redis
 
-# generate Prisma client (Go) — once schema is finalized in Phase 1
+# REQUIRED before first build — generates the Prisma Go client into internal/db
 go run github.com/steebchen/prisma-client-go generate
 
+# push the schema to Postgres (dev-friendly, no migration files)
+go run github.com/steebchen/prisma-client-go db push
+
+go build ./...
 go run ./cmd/api
 ```
 
-Health check: `GET http://localhost:8080/health`
+## API
+
+- `GET  /health` — Redis connectivity check
+- `POST /api/shorten` — body: `{"url": "https://...", "custom_alias": "optional", "expires_at": "optional RFC3339"}`
+- `GET  /:shortCode` — redirects to the long URL (cache-first via Redis, Postgres fallback)
 
 ## Full stack via Docker
 
@@ -24,4 +32,6 @@ docker-compose up --build
 
 ## Status
 
-Phase 0 complete: project scaffold, Docker Compose (Postgres + Redis), Fiber server with `/health`, Prisma schema drafted. See `PROJECT_OVERVIEW.md` §4 for phase tracker.
+Phase 1 complete: base62 short code generation, Redis cache + counter, Prisma-backed Postgres storage,
+real `/api/shorten` and `/:shortCode` handlers. **Note:** run `go run github.com/steebchen/prisma-client-go generate`
+before your first build — see `PROJECT_OVERVIEW.md` §8. See `PROJECT_OVERVIEW.md` §4 for the full phase tracker.

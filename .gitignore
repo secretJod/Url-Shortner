@@ -1,10 +1,11 @@
-# Environment files
 .env
-.env.*
-!.env.example
+*.log
+/tmp/
+bin/
+prisma/db/
 
-# macOS
-.DS_Store
-
-# Repomix export
-repomix-output.xml
+# Go
+*.exe
+*.test
+*.out
+vendor/
