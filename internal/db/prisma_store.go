@@ -17,6 +17,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/steebchen/prisma-client-go/runtime/types"
+
 	"github.com/yourorg/urlshortener/internal/store"
 )
 
@@ -40,22 +42,27 @@ func (s *PrismaStore) Close() error {
 }
 
 func (s *PrismaStore) CreateLink(ctx context.Context, l *store.Link) error {
-	optional := []LinkSetParam{}
+	// All optional Set()/relation params must go in ONE slice spread with
+	// `...` — Go doesn't allow mixing individual variadic args with a
+	// spread slice in the same call, so CustomAlias lives here too even
+	// though it's always set.
+	params := []LinkSetParam{
+		Link.CustomAlias.Set(l.CustomAlias),
+	}
 	if l.UserID != nil {
-		optional = append(optional, Link.User.Link(User.ID.Equals(int(*l.UserID))))
+		params = append(params, Link.User.Link(User.ID.Equals(types.BigInt(*l.UserID))))
 	}
 	if l.ExpiresAt != nil {
-		optional = append(optional, Link.ExpiresAt.Set(*l.ExpiresAt))
+		params = append(params, Link.ExpiresAt.Set(*l.ExpiresAt))
 	}
 	if l.PasswordHash != nil {
-		optional = append(optional, Link.PasswordHash.Set(*l.PasswordHash))
+		params = append(params, Link.PasswordHash.Set(*l.PasswordHash))
 	}
 
 	created, err := s.client.Link.CreateOne(
 		Link.ShortCode.Set(l.ShortCode),
 		Link.LongURL.Set(l.LongURL),
-		Link.CustomAlias.Set(l.CustomAlias),
-		optional...,
+		params...,
 	).Exec(ctx)
 	if err != nil {
 		return err
