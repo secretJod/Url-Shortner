@@ -72,7 +72,7 @@ Client → Load Balancer → Go API (stateless, N instances)
 ## 4. Build Phases & Status
 
 - [x] **Phase 0** — Scaffold, this overview file, Docker setup, Fiber server + Redis client wired, `/health` endpoint, builds clean
-- [x] **Phase 1** — Core shorten + redirect API (base62 ID gen, Postgres via Prisma, Redis cache) *(code complete — see §8 for one required local step)*
+- [x] **Phase 1** — Core shorten + redirect API (base62 ID gen, Postgres via Prisma, Redis cache) *(verified working end-to-end: POST /api/shorten → Postgres write → cache write-through → GET redirect → 302 confirmed on Karan's machine)*
 - [ ] **Phase 2** — Auth (API keys) + rate limiting
 - [ ] **Phase 3** — Async analytics pipeline (Redis Streams → worker → Postgres)
 - [ ] **Phase 4** — Admin/stats API
@@ -118,20 +118,35 @@ urlshortener/
   Verified with `go build` and `go vet` — both clean. Next session: Phase 1 (base62 short code generation
   via Redis INCR, wire Prisma client, implement real `/api/shorten` and `/:shortCode` handlers).
 
-- **Session 2**: Phase 1 built. `internal/shortcode` (base62 encode/decode, unit tested — 10k-value
-  collision check passes). `internal/redis`: `NextID()` via `INCR` for lock-free ID minting, cache
-  get/set/invalidate with TTL, atomic custom-alias reservation via `SETNX`. `internal/store`: `LinkStore`
-  interface so handlers never depend on Prisma directly. `internal/db/prisma_store.go`: Prisma-backed
-  `LinkStore` implementation (cache-miss fallback, expired-link handling). Real `/api/shorten` (validates
-  URL, supports custom alias + expiry, write-through cache) and `/:shortCode` (cache-first, Postgres
-  fallback, cache backfill) handlers wired into `main.go`.
+- **Session 3**: Debugged Phase 1 all the way to a verified working end-to-end test. In order:
+  1. Fixed two real Prisma-client-go usage bugs found on first real build (couldn't be caught in the
+     sandbox since codegen wasn't possible there): (a) `CreateOne` — Go disallows mixing an individual
+     variadic arg with a spread slice in one call; moved all optional `Set()` params into one slice.
+     (b) `User.ID.Equals` needed an explicit `types.BigInt` conversion, not a plain Go `int`.
+  2. Fixed "ensure: no binary found" at container runtime — `prisma generate` had been run on the host
+     (macOS/arm64), embedding the wrong platform's query-engine binary. Fix: moved `prisma-client-go
+     prefetch` + `generate` into the Dockerfile's builder stage itself (`golang:1.22-alpine`), per
+     Prisma's documented Docker pattern, so the embedded engine matches the container's actual platform.
+  3. Fixed api container connecting to `localhost:5432`/`localhost:6379` instead of the Postgres/Redis
+     *containers* — `.env` is correct for host-side `go run`, but wrong once loaded into a container via
+     `env_file` (inside Docker's network, services are reachable by service name). Fix: added an
+     `environment:` override block on the `api` service in `docker-compose.yml` for just those two vars.
+  4. Fixed `relation "public.links" does not exist` — `prisma generate` (builds the Go client) and
+     `prisma db push` (creates the actual Postgres tables) are separate steps; only the former had been
+     run. Running `db push` locally (needs `DATABASE_URL` pointing to `localhost:5432`, i.e. host-side,
+     while `docker compose`'s Postgres port is mapped out to the host) created the tables.
+  5. **Verified end-to-end**: `POST /api/shorten` → `201` with real `short_url`/`short_code`. `GET
+     /<short_code>` → `302 Found` with correct `Location` header. Full pipeline confirmed working.
 
-  **Tried and confirmed**: `prisma generate` cannot run in this build sandbox — it needs
-  `packaged-cli.prisma.sh`, which isn't network-allowlisted here (only `github.com` and a few others are).
-  Verified every other new package (`shortcode`, `redis`, `store`, `handlers`) builds clean in isolation.
-  `internal/db` fails only on the exact symbols codegen would create (`PrismaClient`, `NewClient`, `Link`,
-  `User`, `LinkSetParam`) — confirms the code is correct and only the codegen step is missing. **You need
-  to run the codegen step yourself locally — see §8.**
+  **Workflow note for next time**: after `docker compose up --build`, if tables don't exist yet, run
+  `go run github.com/steebchen/prisma-client-go db push` locally (host-side, not in Docker) once, with
+  the Postgres container already up and its port mapped to the host. This is a manual step for now —
+  worth switching to proper `prisma migrate` files in a later phase so it's automatic.
+
+## 9. Repo & credentials note
+This project lives at `github.com/secretJod/Url-Shortner` (public repo). Claude pushes commits directly
+using a short-lived, repo-scoped fine-grained PAT that Karan provides fresh each session — the token is
+never stored between sessions, and Karan revokes it after each session ends.
 
 ## 8. Required local step before this runs: generate the Prisma client
 
