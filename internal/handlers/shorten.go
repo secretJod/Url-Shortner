@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/yourorg/urlshortener/internal/middleware"
 	"github.com/yourorg/urlshortener/internal/redis"
 	"github.com/yourorg/urlshortener/internal/shortcode"
 	"github.com/yourorg/urlshortener/internal/store"
@@ -77,6 +78,9 @@ func (h *ShortenHandler) Shorten(c *fiber.Ctx) error {
 		LongURL:     longURL,
 		CustomAlias: isCustom,
 		ExpiresAt:   expiresAt,
+	}
+	if apiKey := middleware.GetAPIKey(c); apiKey != nil {
+		link.UserID = &apiKey.UserID
 	}
 
 	if err := h.Store.CreateLink(ctx, link); err != nil {

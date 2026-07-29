@@ -106,3 +106,78 @@ func (s *PrismaStore) GetLinkByShortCode(ctx context.Context, shortCode string) 
 
 	return result, nil
 }
+
+func (s *PrismaStore) GetOrCreateUserByEmail(ctx context.Context, email string) (*store.User, error) {
+	found, err := s.client.User.FindUnique(
+		User.Email.Equals(email),
+	).Exec(ctx)
+
+	if err == nil {
+		return &store.User{
+			ID:        uint64(found.ID),
+			Email:     found.Email,
+			CreatedAt: found.CreatedAt,
+		}, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
+	created, err := s.client.User.CreateOne(
+		User.Email.Set(email),
+		// PasswordHash isn't part of Phase 2's scope (no login yet), so we
+		// store an empty placeholder. Revisit if/when full auth is added.
+		User.PasswordHash.Set(""),
+	).Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.User{
+		ID:        uint64(created.ID),
+		Email:     created.Email,
+		CreatedAt: created.CreatedAt,
+	}, nil
+}
+
+func (s *PrismaStore) CreateAPIKey(ctx context.Context, k *store.ApiKey) error {
+	tier := k.RateLimitTier
+	if tier == "" {
+		tier = "standard"
+	}
+
+	created, err := s.client.ApiKey.CreateOne(
+		ApiKey.KeyHash.Set(k.KeyHash),
+		ApiKey.User.Link(User.ID.Equals(types.BigInt(k.UserID))),
+		ApiKey.RateLimitTier.Set(tier),
+	).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	k.ID = uint64(created.ID)
+	k.RateLimitTier = created.RateLimitTier
+	k.CreatedAt = created.CreatedAt
+	return nil
+}
+
+func (s *PrismaStore) GetAPIKeyByHash(ctx context.Context, hash string) (*store.ApiKey, error) {
+	found, err := s.client.ApiKey.FindUnique(
+		ApiKey.KeyHash.Equals(hash),
+	).Exec(ctx)
+
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+
+	return &store.ApiKey{
+		ID:            uint64(found.ID),
+		KeyHash:       found.KeyHash,
+		UserID:        uint64(found.UserID),
+		RateLimitTier: found.RateLimitTier,
+		CreatedAt:     found.CreatedAt,
+	}, nil
+}

@@ -73,7 +73,7 @@ Client → Load Balancer → Go API (stateless, N instances)
 
 - [x] **Phase 0** — Scaffold, this overview file, Docker setup, Fiber server + Redis client wired, `/health` endpoint, builds clean
 - [x] **Phase 1** — Core shorten + redirect API (base62 ID gen, Postgres via Prisma, Redis cache) *(verified working end-to-end: POST /api/shorten → Postgres write → cache write-through → GET redirect → 302 confirmed on Karan's machine)*
-- [ ] **Phase 2** — Auth (API keys) + rate limiting
+- [x] **Phase 2** — Auth (API keys) + rate limiting *(code complete, builds clean — needs the same local Prisma codegen re-run + a live test, see session log)*
 - [ ] **Phase 3** — Async analytics pipeline (Redis Streams → worker → Postgres)
 - [ ] **Phase 4** — Admin/stats API
 - [ ] **Phase 5** — Load testing, caching tuning, observability (metrics/logging)
@@ -147,6 +147,36 @@ urlshortener/
 This project lives at `github.com/secretJod/Url-Shortner` (public repo). Claude pushes commits directly
 using a short-lived, repo-scoped fine-grained PAT that Karan provides fresh each session — the token is
 never stored between sessions, and Karan revokes it after each session ends.
+
+## 10. Session Log (continued)
+- **Session 4**: Phase 2 built — API keys + rate limiting.
+
+  **Scope decision**: no full signup/login/password flow yet. `POST /api/keys` takes just an email,
+  get-or-creates a `User` (with an empty password placeholder — full auth is a separate future decision,
+  not part of Phase 2), generates a random 256-bit API key, and returns the raw key exactly once. Only
+  its SHA-256 hash is ever stored. This matches how most API-first products (Stripe, bit.ly, etc.) start.
+
+  **What was built**:
+  - `internal/auth` — API key generation (`usk_`-prefixed, 256-bit random) + SHA-256 hashing + bearer
+    token extraction. Unit tested (randomness, hash consistency, header parsing edge cases).
+  - `internal/redis/ratelimit.go` — sliding-window-log rate limiter using a Redis sorted set (ZADD +
+    ZREMRANGEBYSCORE + ZCARD), more accurate than fixed-window counters (no boundary-burst problem).
+    Integration-tested against a real local Redis (under-limit, over-limit, window-slide-expiry cases).
+  - `internal/store` — extended with `User`/`ApiKey` types and `UserStore`/`ApiKeyStore` interfaces;
+    `PrismaStore` now implements the full combined `Store` interface.
+  - `internal/middleware/auth.go` — `OptionalAPIKeyAuth`: anonymous requests pass through; requests
+    WITH an `Authorization` header that fails to validate are rejected (no silent fallback to anonymous
+    for a malformed/invalid key — that would hide misconfigured clients).
+  - `internal/middleware/ratelimit.go` — per-API-key-tier limits (`standard`=60/min, `pro`=600/min) or
+    per-IP for anonymous (20/min). Fails open on Redis errors (a cache hiccup shouldn't take down the API).
+  - `POST /api/keys` and `POST /api/shorten` now go through `authMW` (shorten only) then `rateLimitMW`.
+    Links created with a valid API key get `UserID` set, associating them with that user.
+
+  **Verified in sandbox**: all new packages (`auth`, `redis` incl. rate limiter, `store`, `middleware`,
+  `handlers`, `cmd/api`) build and vet clean; `internal/db` fails only on the same known missing-codegen
+  symbols as before (confirms no new bugs, same as the Phase 1 pattern). **Not yet live-tested end-to-end**
+  on Karan's machine — do that next: `git pull`, rebuild, then hit `POST /api/keys` and confirm rate
+  limiting kicks in on `POST /api/shorten` after enough anonymous requests.
 
 ## 8. Required local step before this runs: generate the Prisma client
 
