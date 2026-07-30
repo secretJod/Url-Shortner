@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/joho/godotenv"
 
 	"github.com/yourorg/urlshortener/internal/config"
 	"github.com/yourorg/urlshortener/internal/db"
@@ -15,6 +16,8 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load()
+
 	cfg := config.Load()
 
 	rdb := redis.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)

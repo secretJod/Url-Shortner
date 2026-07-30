@@ -146,10 +146,10 @@ func (s *PrismaStore) CreateAPIKey(ctx context.Context, k *store.ApiKey) error {
 		tier = "standard"
 	}
 
-	created, err := s.client.ApiKey.CreateOne(
-		ApiKey.KeyHash.Set(k.KeyHash),
-		ApiKey.User.Link(User.ID.Equals(types.BigInt(k.UserID))),
-		ApiKey.RateLimitTier.Set(tier),
+	created, err := s.client.APIKey.CreateOne(
+		APIKey.KeyHash.Set(k.KeyHash),
+		APIKey.User.Link(User.ID.Equals(types.BigInt(k.UserID))),
+		APIKey.RateLimitTier.Set(tier),
 	).Exec(ctx)
 	if err != nil {
 		return err
@@ -162,8 +162,8 @@ func (s *PrismaStore) CreateAPIKey(ctx context.Context, k *store.ApiKey) error {
 }
 
 func (s *PrismaStore) GetAPIKeyByHash(ctx context.Context, hash string) (*store.ApiKey, error) {
-	found, err := s.client.ApiKey.FindUnique(
-		ApiKey.KeyHash.Equals(hash),
+	found, err := s.client.APIKey.FindUnique(
+		APIKey.KeyHash.Equals(hash),
 	).Exec(ctx)
 
 	if err != nil {
