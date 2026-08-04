@@ -1,11 +1,33 @@
+# Environment variables (contains secrets)
 .env
+
+# Logs
 *.log
-/tmp/
+
+# Build artifacts
 bin/
-prisma/db/
+api
+
+# Prisma generated client (regenerated from schema)
+internal/db/prisma/
 
 # Go
 *.exe
 *.test
 *.out
 vendor/
+
+# Docker
+pg_data/
+redis_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

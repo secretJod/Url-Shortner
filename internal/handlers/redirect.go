@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -23,8 +25,13 @@ func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
 	ctx := c.Context()
 
 	// 1. Cache-first — this is the path that should serve almost all traffic.
-	longURL, err := h.Redis.GetLongURL(ctx, shortCode)
+	longURL, linkID, err := h.Redis.GetLongURL(ctx, shortCode)
 	if err == nil {
+		// Fire-and-forget click event for analytics (Phase 3).
+		// linkID may be 0 for old cache entries — skip if so.
+		if linkID > 0 {
+			h.fireClickEvent(ctx, linkID, c)
+		}
 		return c.Redirect(longURL, fiber.StatusFound)
 	}
 	if !errors.Is(err, redis.ErrCacheMiss) {
@@ -43,10 +50,25 @@ func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
 	}
 
 	// 3. Backfill the cache so the next request for this code is a hit.
-	_ = h.Redis.SetLongURL(ctx, link.ShortCode, link.LongURL, link.ExpiresAt)
+	_ = h.Redis.SetLongURL(ctx, link.ShortCode, link.LongURL, link.ID, link.ExpiresAt)
 
-	// TODO (Phase 3): fire-and-forget click event onto a Redis Stream here
-	// for async analytics, without blocking this redirect.
+	// 4. Fire-and-forget click event for analytics (Phase 3).
+	h.fireClickEvent(ctx, link.ID, c)
 
 	return c.Redirect(link.LongURL, fiber.StatusFound)
+}
+
+// fireClickEvent pushes a click event onto the Redis Stream for the
+// analytics worker to consume. It is strictly fire-and-forget:
+// errors are ignored, and the redirect is never blocked or failed
+// due to analytics issues.
+func (h *RedirectHandler) fireClickEvent(ctx context.Context, linkID uint64, c *fiber.Ctx) {
+	ev := redis.ClickEvent{
+		LinkID:    linkID,
+		Timestamp: time.Now().UnixNano(),
+		Referrer:  c.Get("Referer"),
+		IPHash:    redis.HashIP(c.IP()),
+	}
+	// Ignore error — analytics is best-effort.
+	_ = h.Redis.PushClickEvent(ctx, ev)
 }

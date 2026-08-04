@@ -91,7 +91,7 @@ func (h *ShortenHandler) Shorten(c *fiber.Ctx) error {
 	}
 
 	// Write-through cache so the very first redirect is already a cache hit.
-	_ = h.Redis.SetLongURL(ctx, shortCode, longURL, expiresAt)
+	_ = h.Redis.SetLongURL(ctx, shortCode, longURL, link.ID, expiresAt)
 
 	return c.Status(fiber.StatusCreated).JSON(shortenResponse{
 		ShortURL:  h.BaseURL + "/" + shortCode,

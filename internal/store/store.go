@@ -46,6 +46,20 @@ type ApiKey struct {
 	CreatedAt     time.Time
 }
 
+// ClickEvent mirrors the Prisma ClickEvent model. These are written
+// asynchronously by the analytics worker (Phase 3), not on the redirect
+// hot path — the redirect handler pushes events to a Redis Stream and
+// the worker drains them into Postgres.
+type ClickEvent struct {
+	ID         uint64
+	LinkID     uint64
+	Timestamp  time.Time
+	Referrer   string
+	Country    string
+	DeviceType string
+	IPHash     string
+}
+
 type LinkStore interface {
 	// CreateLink persists a new link. shortCode must already be finalized
 	// (base62-encoded ID, or a validated custom alias) before calling this.
@@ -73,6 +87,47 @@ type ApiKeyStore interface {
 	GetAPIKeyByHash(ctx context.Context, hash string) (*ApiKey, error)
 }
 
+// ClickEventStore persists click events. Implemented by PrismaStore and
+// used by the analytics worker (Phase 3) to drain the Redis Stream into
+// Postgres in batches.
+type ClickEventStore interface {
+	// CreateClickEvent persists a single click event. Called by the
+	// analytics worker after consuming from the Redis Stream.
+	CreateClickEvent(ctx context.Context, e *ClickEvent) error
+}
+
+// LinkStats aggregates click analytics for a single link.
+type LinkStats struct {
+	Link         Link
+	TotalClicks  int64
+	UniqueIPs    int64
+	ReferrerTop  []string
+	DailyClicks  []DailyClicks
+}
+
+// DailyClicks groups click counts by calendar day.
+type DailyClicks struct {
+	Date  time.Time
+	Count int64
+}
+
+// StatsStore provides analytics queries over links and click events.
+// Implemented by PrismaStore and used by the stats/admin handlers (Phase 4).
+type StatsStore interface {
+	// GetLinkStats returns aggregated click stats for a single link.
+	// Returns ErrNotFound if the link doesn't exist.
+	GetLinkStats(ctx context.Context, shortCode string) (*LinkStats, error)
+
+	// GetTopLinks returns the N most-clicked links.
+	GetTopLinks(ctx context.Context, limit int) ([]*LinkStats, error)
+
+	// GetUserLinks returns all links created by a specific user.
+	GetUserLinks(ctx context.Context, userID uint64) ([]*Link, error)
+
+	// GetRecentClickEvents returns the most recent click events for a link.
+	GetRecentClickEvents(ctx context.Context, linkID uint64, limit int) ([]*ClickEvent, error)
+}
+
 // Store combines all the storage interfaces the app needs. Handlers and
 // middleware depend on this (or the narrower interfaces above), never on
 // Prisma directly.
@@ -80,4 +135,6 @@ type Store interface {
 	LinkStore
 	UserStore
 	ApiKeyStore
+	ClickEventStore
+	StatsStore
 }

@@ -74,8 +74,8 @@ Client → Load Balancer → Go API (stateless, N instances)
 - [x] **Phase 0** — Scaffold, this overview file, Docker setup, Fiber server + Redis client wired, `/health` endpoint, builds clean
 - [x] **Phase 1** — Core shorten + redirect API (base62 ID gen, Postgres via Prisma, Redis cache) *(verified working end-to-end: POST /api/shorten → Postgres write → cache write-through → GET redirect → 302 confirmed on Karan's machine)*
 - [x] **Phase 2** — Auth (API keys) + rate limiting *(code complete, builds clean — needs the same local Prisma codegen re-run + a live test, see session log)*
-- [ ] **Phase 3** — Async analytics pipeline (Redis Streams → worker → Postgres)
-- [ ] **Phase 4** — Admin/stats API
+- [x] **Phase 3** — Async analytics pipeline (Redis Streams → worker → Postgres) *(verified live end-to-end: click events flowing from redirects to Postgres)*
+- [x] **Phase 4** — Admin/stats API *(verified live: GET /api/stats/:code, /api/stats/top, /api/links, /api/links/:code/clicks all working)*
 - [ ] **Phase 5** — Load testing, caching tuning, observability (metrics/logging)
 - [ ] **Phase 6** — Deployment hardening (Docker Compose finalized, optional K8s manifests)
 
@@ -177,6 +177,58 @@ never stored between sessions, and Karan revokes it after each session ends.
   symbols as before (confirms no new bugs, same as the Phase 1 pattern). **Not yet live-tested end-to-end**
   on Karan's machine — do that next: `git pull`, rebuild, then hit `POST /api/keys` and confirm rate
   limiting kicks in on `POST /api/shorten` after enough anonymous requests.
+
+- **Session 5**: Phase 3 built — async analytics pipeline (Redis Streams → worker → Postgres).
+
+  **What was built**:
+  - `internal/redis/stream.go` — Redis Stream producer (`PushClickEvent` using `XADD` with `MAXLEN ~100000`
+    for automatic trimming) and consumer (`ReadClickEvents` using `XReadGroup` with a consumer group for
+    horizontal scaling + crash recovery). Also includes `HashIP` (SHA-256, first 16 hex chars) for
+    privacy-preserving IP hashing, `AckClickEvents` (`XACK`), and `StreamLen` for monitoring.
+  - `internal/redis/stream_test.go` — integration tests: push/read round-trip, IP hashing determinism +
+    uniqueness, stream length tracking. Tests skip gracefully if Redis isn't reachable.
+  - `internal/store/store.go` — extended with `ClickEvent` struct and `ClickEventStore` interface;
+    `Store` now includes `ClickEventStore`.
+  - `internal/db/prisma_store.go` — `CreateClickEvent` implementation using Prisma's `ClickEvent.CreateOne`
+    (link relation as first arg, optional fields as variadic params — same pattern as `CreateLink`).
+  - `internal/worker/worker.go` — `AnalyticsWorker`: background goroutine that reads click events from
+    the Redis Stream in batches (100 at a time, 5s block), writes each to Postgres via `CreateClickEvent`,
+    and ACKs successfully-written events. Failed writes are NOT ACKed (stay in pending list for retry).
+    Graceful shutdown via context cancellation.
+  - `internal/redis/cache.go` — cache value format changed from plain URL string to JSON object
+    `{"url":"...","id":123}` so the redirect handler has the link ID for click events even on cache hits.
+    Backward compatible: old plain-URL cache entries are parsed with linkID=0 (click event skipped).
+  - `internal/handlers/redirect.go` — replaced the Phase 3 TODO with `fireClickEvent` method that pushes
+    a `ClickEvent` (with link ID, referrer, hashed IP) to the Redis Stream. Fire-and-forget: errors are
+    ignored, redirect is never blocked.
+  - `internal/handlers/shorten.go` — `SetLongURL` call updated to pass `link.ID` (new cache signature).
+  - `cmd/api/main.go` — starts the `AnalyticsWorker` alongside the API server with a cancellable context.
+    Added graceful shutdown on SIGINT/SIGTERM (cancels worker context + shuts down Fiber).
+
+  **Verified in sandbox**: all packages (except `internal/db` which needs Prisma codegen) build and vet
+  clean. **Not yet live-tested end-to-end** on Karan's machine.
+- **Session 6**: Phase 4 built — Admin/Stats API.
+
+  **What was built**:
+  - `internal/store/store.go` — added `LinkStats`, `DailyClicks` types and `StatsStore` interface
+    with methods: `GetLinkStats`, `GetTopLinks`, `GetUserLinks`, `GetRecentClickEvents`. Combined
+    `Store` interface now includes `StatsStore`.
+  - `internal/db/prisma_store.go` — implemented all StatsStore methods using Prisma queries:
+    `GetLinkStats` aggregates clicks, unique IPs, top referrers, and daily click counts.
+    `GetTopLinks` sorts all links by click count (top N). `GetUserLinks` finds links by user ID.
+    `GetRecentClickEvents` fetches recent click events (sorted by timestamp descending, in Go).
+  - `internal/handlers/stats.go` — new `StatsHandler` with routes:
+    - `GET /api/stats/:shortCode` — aggregated click stats for a link (total clicks, unique IPs, top referrers, daily click chart)
+    - `GET /api/stats/top?limit=N` — most-clicked links
+    - `GET /api/links` — all links for the authenticated user (requires API key)
+    - `GET /api/links/:shortCode/clicks?limit=N` — recent click events for a link
+  - `internal/db/prisma_store.go` — fixed `QueryOrderDesc` compiler error by sorting results in Go
+    instead of using Prisma's OrderBy (which wasn't available for the generated code).
+
+  **Verified live on Karan's machine**: all 4 endpoints tested with real PostgreSQL data
+  (click events recorded in prior tests). `GET /api/stats/s` returned correct totals,
+  `GET /api/stats/top?limit=5` returned links sorted by clicks, `GET /api/links/s/clicks`
+  returned recent events, and `GET /api/links` with a new API key returned an empty list.
 
 ## 8. Required local step before this runs: generate the Prisma client
 

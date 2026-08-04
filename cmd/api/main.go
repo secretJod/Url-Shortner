@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -13,6 +17,7 @@ import (
 	"github.com/yourorg/urlshortener/internal/handlers"
 	"github.com/yourorg/urlshortener/internal/middleware"
 	"github.com/yourorg/urlshortener/internal/redis"
+	"github.com/yourorg/urlshortener/internal/worker"
 )
 
 func main() {
@@ -28,6 +33,16 @@ func main() {
 		log.Fatalf("failed to connect to Postgres via Prisma: %v", err)
 	}
 	defer linkStore.Close()
+
+	// Start the analytics worker (Phase 3) — consumes click events from
+	// the Redis Stream and writes them to Postgres in the background.
+	// The worker runs in its own goroutine and shuts down gracefully
+	// when the context is cancelled (on SIGINT/SIGTERM).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	analyticsWorker := worker.New(rdb, linkStore)
+	analyticsWorker.Start(ctx)
 
 	app := fiber.New(fiber.Config{
 		AppName:      "urlshortener",
@@ -54,6 +69,24 @@ func main() {
 
 	redirect := handlers.NewRedirectHandler(linkStore, rdb)
 	app.Get("/:shortCode", redirect.Redirect)
+
+	// Phase 4: Admin/Stats API
+	stats := handlers.NewStatsHandler(linkStore)
+	app.Get("/api/stats/top", rateLimitMW, stats.GetTopLinks)
+	app.Get("/api/stats/:shortCode", rateLimitMW, stats.GetLinkStats)
+	app.Get("/api/links", authMW, rateLimitMW, stats.GetUserLinks)
+	app.Get("/api/links/:shortCode/clicks", rateLimitMW, stats.GetRecentClicks)
+
+	// Graceful shutdown — on SIGINT (Ctrl+C) or SIGTERM, cancel the
+	// context (which stops the analytics worker) and shut down Fiber.
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("shutdown signal received, stopping...")
+		cancel()
+		_ = app.Shutdown()
+	}()
 
 	log.Printf("starting urlshortener on :%s (env=%s)", cfg.Port, cfg.Env)
 	if err := app.Listen(":" + cfg.Port); err != nil {

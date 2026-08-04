@@ -181,3 +181,257 @@ func (s *PrismaStore) GetAPIKeyByHash(ctx context.Context, hash string) (*store.
 		CreatedAt:     found.CreatedAt,
 	}, nil
 }
+
+// CreateClickEvent persists a click event. Called by the analytics worker
+// (Phase 3) after consuming events from the Redis Stream. Each event is
+// written individually — the worker handles batching at the stream-read
+// level (reading N events per XReadGroup call) rather than at the DB level.
+//
+// Prisma's CreateOne signature for ClickEvent requires the link relation
+// as a separate first arg (ClickEventWithPrismaLinkSetParam), with the
+// remaining optional fields as variadic ClickEventSetParam — same pattern
+// as CreateLink above.
+func (s *PrismaStore) CreateClickEvent(ctx context.Context, e *store.ClickEvent) error {
+	params := []ClickEventSetParam{
+		ClickEvent.Timestamp.Set(e.Timestamp),
+	}
+	if e.Referrer != "" {
+		params = append(params, ClickEvent.Referrer.Set(e.Referrer))
+	}
+	if e.Country != "" {
+		params = append(params, ClickEvent.Country.Set(e.Country))
+	}
+	if e.DeviceType != "" {
+		params = append(params, ClickEvent.DeviceType.Set(e.DeviceType))
+	}
+	if e.IPHash != "" {
+		params = append(params, ClickEvent.IPHash.Set(e.IPHash))
+	}
+
+	created, err := s.client.ClickEvent.CreateOne(
+		ClickEvent.Link.Link(Link.ID.Equals(types.BigInt(e.LinkID))),
+		params...,
+	).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	e.ID = uint64(created.ID)
+	return nil
+}
+
+// GetLinkStats returns aggregated click analytics for a link.
+func (s *PrismaStore) GetLinkStats(ctx context.Context, shortCode string) (*store.LinkStats, error) {
+	// First find the link.
+	link, err := s.GetLinkByShortCode(ctx, shortCode)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &store.LinkStats{
+		Link: *link,
+	}
+
+	// Fetch all click events for this link.
+	allEvents, err := s.client.ClickEvent.FindMany(
+		ClickEvent.LinkID.Equals(types.BigInt(link.ID)),
+	).Exec(ctx)
+	if err == nil {
+		stats.TotalClicks = int64(len(allEvents))
+	}
+
+	// Count unique IPs and collect referrers.
+	uniqueIPs := map[string]bool{}
+	referrerCounts := map[string]int{}
+	for _, ev := range allEvents {
+		if ipHash, ok := ev.IPHash(); ok && ipHash != "" {
+			uniqueIPs[ipHash] = true
+		}
+		if ref, ok := ev.Referrer(); ok && ref != "" {
+			referrerCounts[ref]++
+		}
+	}
+	stats.UniqueIPs = int64(len(uniqueIPs))
+
+	// Top referrers (sorted by count, top 5).
+	type refCount struct {
+		ref   string
+		count int
+	}
+	var refs []refCount
+	for ref, cnt := range referrerCounts {
+		refs = append(refs, refCount{ref, cnt})
+	}
+	// Simple insertion sort (fine for <50 items).
+	for i := 1; i < len(refs); i++ {
+		for j := i; j > 0 && refs[j].count > refs[j-1].count; j-- {
+			refs[j], refs[j-1] = refs[j-1], refs[j]
+		}
+	}
+	for i, r := range refs {
+		if i >= 5 {
+			break
+		}
+		stats.ReferrerTop = append(stats.ReferrerTop, r.ref)
+	}
+
+	// Group events by day for the daily click chart.
+	dailyCounts := map[string]int64{}
+	for _, ev := range allEvents {
+		day := ev.Timestamp.Format("2006-01-02")
+		dailyCounts[day]++
+	}
+	for day, cnt := range dailyCounts {
+		parsed, _ := time.Parse("2006-01-02", day)
+		stats.DailyClicks = append(stats.DailyClicks, store.DailyClicks{
+			Date:  parsed,
+			Count: cnt,
+		})
+	}
+	// Sort daily clicks by date ascending.
+	for i := 1; i < len(stats.DailyClicks); i++ {
+		for j := i; j > 0 && stats.DailyClicks[j].Date.Before(stats.DailyClicks[j-1].Date); j-- {
+			stats.DailyClicks[j], stats.DailyClicks[j-1] = stats.DailyClicks[j-1], stats.DailyClicks[j]
+		}
+	}
+
+	return stats, nil
+}
+
+// GetTopLinks returns the N most-clicked links.
+func (s *PrismaStore) GetTopLinks(ctx context.Context, limit int) ([]*store.LinkStats, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Get all links.
+	links, err := s.client.Link.FindMany().Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Count clicks per link.
+	clickCounts := map[uint64]int64{}
+	allEvents, err := s.client.ClickEvent.FindMany().Exec(ctx)
+	if err == nil {
+		for _, ev := range allEvents {
+			clickCounts[uint64(ev.LinkID)]++
+		}
+	}
+
+	// Build LinkStats for each, sort by click count, take top N.
+	var results []*store.LinkStats
+	for _, l := range links {
+		link := &store.Link{
+			ID:          uint64(l.ID),
+			ShortCode:   l.ShortCode,
+			LongURL:     l.LongURL,
+			CustomAlias: l.CustomAlias,
+			CreatedAt:   l.CreatedAt,
+		}
+		if uid, ok := l.UserID(); ok {
+			id := uint64(uid)
+			link.UserID = &id
+		}
+
+		results = append(results, &store.LinkStats{
+			Link:        *link,
+			TotalClicks: clickCounts[uint64(l.ID)],
+		})
+	}
+
+	// Sort by clicks descending (insertion sort, fine for small N).
+	for i := 1; i < len(results); i++ {
+		for j := i; j > 0 && results[j].TotalClicks > results[j-1].TotalClicks; j-- {
+			results[j], results[j-1] = results[j-1], results[j]
+		}
+	}
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+// GetUserLinks returns all links created by a specific user.
+func (s *PrismaStore) GetUserLinks(ctx context.Context, userID uint64) ([]*store.Link, error) {
+	found, err := s.client.Link.FindMany(
+		Link.UserID.Equals(types.BigInt(userID)),
+	).Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var links []*store.Link
+	for _, l := range found {
+		link := &store.Link{
+			ID:          uint64(l.ID),
+			ShortCode:   l.ShortCode,
+			LongURL:     l.LongURL,
+			CustomAlias: l.CustomAlias,
+			CreatedAt:   l.CreatedAt,
+		}
+		if uid, ok := l.UserID(); ok {
+			id := uint64(uid)
+			link.UserID = &id
+		}
+		if exp, ok := l.ExpiresAt(); ok {
+			link.ExpiresAt = &exp
+		}
+		links = append(links, link)
+	}
+	return links, nil
+}
+
+// GetRecentClickEvents returns the most recent click events for a link.
+func (s *PrismaStore) GetRecentClickEvents(ctx context.Context, linkID uint64, limit int) ([]*store.ClickEvent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	found, err := s.client.ClickEvent.FindMany(
+		ClickEvent.LinkID.Equals(types.BigInt(linkID)),
+	).Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sort by timestamp descending (most recent first).
+	for i := 1; i < len(found); i++ {
+		for j := i; j > 0 && found[j].Timestamp.After(found[j-1].Timestamp); j-- {
+			found[j], found[j-1] = found[j-1], found[j]
+		}
+	}
+	if len(found) > limit {
+		found = found[:limit]
+	}
+
+	var events []*store.ClickEvent
+	for _, ev := range found {
+		e := &store.ClickEvent{
+			ID:        uint64(ev.ID),
+			LinkID:    linkID,
+			Timestamp: ev.Timestamp,
+		}
+		if r, ok := ev.Referrer(); ok {
+			e.Referrer = r
+		}
+		if c, ok := ev.Country(); ok {
+			e.Country = c
+		}
+		if d, ok := ev.DeviceType(); ok {
+			e.DeviceType = d
+		}
+		if iph, ok := ev.IPHash(); ok {
+			e.IPHash = iph
+		}
+		events = append(events, e)
+	}
+	return events, nil
+}
