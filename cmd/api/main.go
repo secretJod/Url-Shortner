@@ -15,6 +15,7 @@ import (
 	"github.com/yourorg/urlshortener/internal/config"
 	"github.com/yourorg/urlshortener/internal/db"
 	"github.com/yourorg/urlshortener/internal/handlers"
+	"github.com/yourorg/urlshortener/internal/metrics"
 	"github.com/yourorg/urlshortener/internal/middleware"
 	"github.com/yourorg/urlshortener/internal/redis"
 	"github.com/yourorg/urlshortener/internal/worker"
@@ -34,10 +35,7 @@ func main() {
 	}
 	defer linkStore.Close()
 
-	// Start the analytics worker (Phase 3) — consumes click events from
-	// the Redis Stream and writes them to Postgres in the background.
-	// The worker runs in its own goroutine and shuts down gracefully
-	// when the context is cancelled (on SIGINT/SIGTERM).
+	// Start the analytics worker (Phase 3)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -52,12 +50,19 @@ func main() {
 	app.Use(recover.New())
 	app.Use(logger.New())
 
+	// Phase 5: Metrics middleware
+	appMetrics := metrics.New()
+	app.Use(middleware.MetricsMiddleware(appMetrics))
+
 	health := handlers.NewHealthHandler(rdb)
 	app.Get("/health", health.Check)
 
-	// Auth is optional (anonymous requests still work) but must run before
-	// rate limiting, since the limiter needs to know whether a request is
-	// authenticated to pick the right bucket/limit.
+	// Phase 5: Metrics endpoint
+	app.Get("/metrics", func(c *fiber.Ctx) error {
+		return c.JSON(appMetrics.Snapshot())
+	})
+
+	// Auth + rate limit middleware
 	authMW := middleware.OptionalAPIKeyAuth(linkStore)
 	rateLimitMW := middleware.RateLimit(rdb)
 
@@ -67,18 +72,18 @@ func main() {
 	shorten := handlers.NewShortenHandler(linkStore, rdb, cfg.BaseURL)
 	app.Post("/api/shorten", authMW, rateLimitMW, shorten.Shorten)
 
-	redirect := handlers.NewRedirectHandler(linkStore, rdb)
-	app.Get("/:shortCode", redirect.Redirect)
-
-	// Phase 4: Admin/Stats API
+	// Phase 4: Admin/Stats API (registered BEFORE /:shortCode)
 	stats := handlers.NewStatsHandler(linkStore)
 	app.Get("/api/stats/top", rateLimitMW, stats.GetTopLinks)
 	app.Get("/api/stats/:shortCode", rateLimitMW, stats.GetLinkStats)
 	app.Get("/api/links", authMW, rateLimitMW, stats.GetUserLinks)
 	app.Get("/api/links/:shortCode/clicks", rateLimitMW, stats.GetRecentClicks)
 
-	// Graceful shutdown — on SIGINT (Ctrl+C) or SIGTERM, cancel the
-	// context (which stops the analytics worker) and shut down Fiber.
+	// Redirect route (registered LAST so it doesn't catch /metrics, /api/*, etc.)
+	redirect := handlers.NewRedirectHandler(linkStore, rdb)
+	app.Get("/:shortCode", redirect.Redirect)
+
+	// Graceful shutdown
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
