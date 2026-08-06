@@ -8,7 +8,7 @@
 
 Build a **beautiful, enterprise-level frontend** for a URL Shortener application. The backend is a Go API (Fiber framework) with PostgreSQL + Redis. You need to create a complete React (or Next.js) frontend that connects to the backend API.
 
-**IMPORTANT:** Create the frontend in a folder called `frontend/` so it can be dropped into the project root. Also create a `FRONTEND_README.md` file documenting every page, component, API call, and how the frontend connects to the backend.
+**IMPORTANT:** Create the frontend in a folder called `frontend/` so it can be dropped into the project root (next to `backend/`). Also create a `FRONTEND_README.md` file documenting every page, component, API call, and how the frontend connects to the backend.
 
 ---
 

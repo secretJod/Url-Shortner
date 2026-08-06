@@ -1,36 +1,14 @@
-# Environment variables (contains secrets)
-.env
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
 
-# Logs
-*.log
+# Backend (handled by backend/.gitignore)
+backend/.env
 
-# Build artifacts
-bin/
-api
-
-# Prisma generated client (regenerated from schema)
-internal/db/prisma/
-
-# Go
-*.exe
-*.test
-*.out
-vendor/
-
-# Docker
-pg_data/
-redis_data/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Tool-generated
+.zcode/
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Tool-generated
-.zcode/
