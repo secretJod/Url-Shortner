@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
@@ -50,6 +51,13 @@ func main() {
 	app.Use(recover.New())
 	app.Use(logger.New())
 
+	// Phase 6: CORS — allow frontend dev server (Vite on :5173) to call the API
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+	}))
+
 	// Phase 5: Metrics middleware
 	appMetrics := metrics.New()
 	app.Use(middleware.MetricsMiddleware(appMetrics))
@@ -79,9 +87,33 @@ func main() {
 	app.Get("/api/links", authMW, rateLimitMW, stats.GetUserLinks)
 	app.Get("/api/links/:shortCode/clicks", rateLimitMW, stats.GetRecentClicks)
 
-	// Redirect route (registered LAST so it doesn't catch /metrics, /api/*, etc.)
+	// Phase 6: Serve frontend static files (if frontend/dist exists)
+	app.Static("/", "./frontend/dist")
+
+	// Phase 6: SPA routes — serve index.html for these frontend paths
+	serveIndex := func(c *fiber.Ctx) error {
+		return c.SendFile("./frontend/dist/index.html")
+	}
+	app.Get("/", serveIndex)
+	app.Get("/login", serveIndex)
+	app.Get("/dashboard", serveIndex)
+	app.Get("/stats/*", serveIndex)
+	app.Get("/top", serveIndex)
+	app.Get("/admin", serveIndex)
+
+	// Redirect route for short codes — fallback to SPA index.html if not a valid short code
 	redirect := handlers.NewRedirectHandler(linkStore, rdb)
-	app.Get("/:shortCode", redirect.Redirect)
+	app.Get("/:shortCode", func(c *fiber.Ctx) error {
+		err := redirect.Redirect(c)
+		if err != nil {
+			// Not a valid short code — serve the SPA index.html
+			if c.Response().StatusCode() == fiber.StatusNotFound {
+				return c.SendFile("./frontend/dist/index.html")
+			}
+			return err
+		}
+		return nil
+	})
 
 	// Graceful shutdown
 	go func() {

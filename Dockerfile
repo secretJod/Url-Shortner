@@ -1,4 +1,16 @@
-# --- Build stage ---
+# --- Frontend build stage (Phase 6) ---
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+
+# Copy package files first for better layer caching
+COPY frontend/package*.json ./
+RUN npm install
+
+# Copy all frontend source and build
+COPY frontend/ ./
+RUN npm run build
+
+# --- Backend build stage ---
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
@@ -26,6 +38,9 @@ RUN apk --no-cache add ca-certificates openssl
 WORKDIR /root/
 
 COPY --from=builder /urlshortener .
+
+# Copy frontend build (Phase 6)
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
 CMD ["./urlshortener"]
