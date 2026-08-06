@@ -324,3 +324,42 @@ Create a `FRONTEND_README.md` file that documents:
 4. All pages functional and connected to the backend API
 
 **Build it beautifully. This is an enterprise-grade URL shortener frontend.**
+
+---
+
+## How the Backend Connects (Already Prepped ✔)
+
+The backend has ALREADY been wired up to serve the frontend. Here's what's ready:
+
+### CORS Middleware (Added)
+- Backend allows requests from `http://localhost:5173`, `http://localhost:3000`, `http://localhost:8080`
+- Headers allowed: Origin, Content-Type, Accept, Authorization
+- Methods allowed: GET, POST, PUT, DELETE, OPTIONS
+
+### Static File Serving (Added)
+- Backend serves `./frontend/dist` as static files
+- When you run `npm run build`, the dist folder is served by the Go server at `http://localhost:8080`
+
+### SPA Routes (Added)
+- GET / → index.html
+- GET /login → index.html
+- GET /dashboard → index.html
+- GET /stats/* → index.html
+- GET /top → index.html
+- GET /admin → index.html
+- Unknown short codes → index.html (SPA fallback)
+
+### Dockerfile (Updated)
+- Added node:20-alpine frontend build stage
+- Runs `npm run build` and copies dist to the runner container
+
+### How to Test
+1. Build frontend: `npm run build`
+2. Start backend: `go run ./cmd/api`
+3. Open `http://localhost:8080` → frontend loads
+
+OR for dev mode (two servers):
+1. Start backend: `go run ./cmd/api`  (port 8080)
+2. Start frontend: `npm run dev`  (port 5173)
+3. Vite proxies /api, /health, /metrics to localhost:8080
+
