@@ -63,7 +63,7 @@ export default function TopLinksPage() {
                 </div>
                 <div className="min-w-0 flex-grow">
                   <a 
-                    href={`${window.location.origin}/${link.short_code}`}
+                    href={`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/${link.short_code}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-lg font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center space-x-1"

@@ -40,7 +40,7 @@ export default function LinkTable({ links, onDelete }) {
               <td className="px-6 py-4 whitespace-nowrap text-sm">
                 <div className="flex items-center space-x-2">
                   <a
-                    href={`${window.location.origin}/${link.short_code}`}
+                    href={`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/${link.short_code}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-brand-600 dark:text-brand-400 hover:underline font-medium"
@@ -59,7 +59,7 @@ export default function LinkTable({ links, onDelete }) {
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end space-x-2">
                   <button
-                    onClick={() => copyToClipboard(`${window.location.origin}/${link.short_code}`, link.short_code)}
+                    onClick={() => copyToClipboard(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/${link.short_code}`, link.short_code)}
                     className="p-1.5 text-gray-500 hover:text-brand-600 dark:text-gray-400 dark:hover:text-brand-400 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                     title="Copy"
                   >

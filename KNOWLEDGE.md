@@ -1744,3 +1744,105 @@ curl http://localhost:8080/api/links/<short_code>/clicks?limit=10
 | **Phase 4** | ✅ Complete | Admin/Stats API (link analytics, top links, user links, recent clicks) |
 | **Phase 5** | ⬜ Not started | Load testing, caching tuning, observability |
 | **Phase 6** | ⬜ Not started | Deployment hardening (finalized Docker Compose, optional Kubernetes) |
+
+
+---
+
+## 18. Frontend (LinkSnip UI) — What It Is & How It Works
+
+### What is the frontend?
+
+The frontend is the **visual part** of the app — the web pages you actually see and click in your browser. It is built with **React** (a popular JavaScript library for building user interfaces) and **Vite** (a fast build tool).
+
+When you open http://localhost:5173, you see the **LinkSnip** UI — the landing page with the URL shortening box, the login page, the dashboard, the stats charts, etc.
+
+### Frontend Pages (6)
+
+| Page | URL | What It Does |
+|------|-----|--------------|
+| Landing | / | Hero section + the Shorten a URL input box |
+| Login | /login | Enter your email to get an API key |
+| Dashboard | /dashboard | Shows all YOUR shortened links (requires API key) |
+| Stats | /stats/abc123 | Charts and analytics for one specific link |
+| Top Links | /top | The most-clicked links across the whole app |
+| Admin | /admin | Shows app health and performance metrics |
+
+### How the frontend talks to the backend
+
+Your Browser -> Vite Dev Server (frontend, port 5173) -> Go Backend API (port 8080) -> PostgreSQL / Redis
+
+In development, the frontend runs on port 5173 and the backend runs on port 8080. Vite automatically forwards any request starting with /api to the backend.
+
+### Auth — API Keys
+
+- You get an API key by entering your email on the Login page
+- The key is stored in your browser localStorage
+- Every API call automatically includes Authorization: Bearer usk_...
+- If the key is missing or invalid, you get redirected to the Login page
+
+### Key Frontend Files
+
+| File | What It Does |
+|------|--------------|
+| frontend/src/App.jsx | Defines all the routes (which page shows at which URL) |
+| frontend/src/main.jsx | The starting point — mounts React into the HTML page |
+| frontend/src/api/client.js | The postman — handles all API calls, adds auth header |
+| frontend/src/context/AuthContext.jsx | Stores your API key state (logged in / logged out) |
+| frontend/src/pages/LandingPage.jsx | The homepage with the shorten form |
+| frontend/src/pages/DashboardPage.jsx | Your links table |
+| frontend/src/pages/StatsPage.jsx | The analytics charts for a link |
+| frontend/src/components/LinkTable.jsx | The table showing your links (with copy/delete/stats buttons) |
+
+---
+
+## 19. How to Run the FULL App (Both Parts)
+
+You need two terminals because the frontend and backend are separate servers:
+
+Terminal 1 — run the backend (port 8080):
+  cd backend
+  go run ./cmd/api
+
+Terminal 2 — run the frontend (port 5173):
+  cd frontend
+  npm install     (only the first time)
+  npm run dev
+
+Then open http://localhost:5173 in your browser.
+
+---
+
+## 20. Project Structure (Current, Full-Stack)
+
+Url-Shortner/
+  backend/              <- Go API (the brain)
+    cmd/api/main.go     <- Server entry point
+    internal/           <- All Go packages
+    prisma/             <- Database schema
+    go.mod              <- Go dependencies
+    Dockerfile          <- Container build
+  frontend/             <- React app (the face)
+    src/                <- All React source
+    vite.config.js      <- Dev server + proxy config
+    package.json        <- Frontend dependencies
+    tailwind.config.js  <- Styling config
+  docs/                 <- All documentation
+  .ai/                  <- AI agent context files
+  KNOWLEDGE.md          <- This file
+  docker-compose.yml    <- Runs postgres + redis + api
+  QWEN_FRONTEND_PROMPT.md <- The prompt used to generate the frontend
+
+---
+
+## 21. Current Phase Status and What is Next
+
+| Phase | Status | What |
+|-------|--------|------|
+| 0 | Done | Scaffold, Docker, Fiber, Redis |
+| 1 | Done | Core shorten + redirect API |
+| 2 | Done | API key auth + rate limiting |
+| 3 | Done | Async analytics pipeline |
+| 4 | Done | Admin/Stats API |
+| 5 | Done | Observability (metrics) |
+| 6 | Done | Frontend UI (LinkSnip) + backend wiring |
+| 7 | NEXT | Deployment — take the app live on the internet |
