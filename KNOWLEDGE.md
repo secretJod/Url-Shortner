@@ -1795,6 +1795,114 @@ In development, the frontend runs on port 5173 and the backend runs on port 8080
 
 ---
 
+## 18a. Frontend Design System — Glassmorphism + 3D Animation (UI Overhaul)
+
+The frontend received a complete **visual overhaul** focused on polish, motion, and depth. **No application logic was changed** — only the visual/presentation layer. The upgrade added **Framer Motion** as the animation engine.
+
+### New Dependency
+
+```
+framer-motion  ^13.0.0   ← spring physics, 3D transforms, AnimatePresence
+```
+
+### Design Language
+
+| Concept | Implementation |
+|---------|----------------|
+| **Glassmorphism** | Translucent surfaces (`rgba(255,255,255,0.7)`) + `backdrop-blur-xl`. Applied via `.glass` and `.card` classes in `frontend/src/index.css` |
+| **Animated gradient text** | `.text-gradient` / `.text-gradient-animated` — sky→indigo→purple gradient clipped to text via `background-clip: text`, with animated `background-position` on hero headlines |
+| **3D perspective hover** | Cards (`StatCard`, feature cards) tilt on cursor via Framer Motion's `useMotionValue` → `useSpring` → `rotateX`/`rotateY` |
+| **Glow effects** | Custom boxShadow tokens (`shadow-glow-brand`, `shadow-glow-purple`, `shadow-glow-green`) in `tailwind.config.js` |
+| **Floating orbs** | Animated blurred radial gradients drifting on Landing + Login pages |
+| **Shimmer sweep** | `.shimmer-surface` utility — sliding highlight used on medals, badges, generated API key |
+| **Staggered entrances** | Framer Motion `variants` with `staggerChildren` for lists, table rows, nav items |
+
+### The "Unique" Input Box
+
+The URL and email inputs use a **rotating conic-gradient border** — the signature visual element:
+
+```
+frontend/src/index.css  →  @property --angle  (CSS custom property, animatable)
+                          .gradient-border-wrap  {
+                              background: conic-gradient(from var(--angle), #0ea5e9, #6366f1, #8b5cf6, #ec4899, #0ea5e9);
+                              animation: gradientBorder 3s linear infinite;
+                          }
+```
+
+The border rotates continuously, dims to 40% opacity when unfocused, and the leading icon scales + shifts to brand color on focus. The ShortenForm (`frontend/src/components/ShortenForm.jsx`) and LoginPage email field both use this.
+
+### Component Classes (`frontend/src/index.css`)
+
+| Class | Visual Behavior |
+|-------|-----------------|
+| `.btn-primary` | Multi-stop gradient fill (sky→indigo→purple), shimmer sweep overlay, 3D press (`scale 0.98`), glow on hover, 200% background-position shift on hover |
+| `.btn-secondary` | Glassmorphic with `backdrop-blur`, brand border glow on hover, lift on hover |
+| `.input-field` | Glass surface, focus glow (3-layer box-shadow), inner highlight |
+| `.card` | Glassmorphic, hover lift (`translateY -2px`), shadow bloom on hover |
+| `.card-flush` | Card with no padding (used by LinkTable) |
+| `.gradient-border-wrap` | The rotating conic-gradient border for unique inputs |
+| `.glass` | Pure frosted glass utility (blur + saturate) |
+| `.text-gradient-animated` | Animated gradient clipped to text |
+| `.shimmer-surface` | Sliding diagonal highlight sweep |
+| `.perspective` / `.preserve-3d` | 3D transform helpers for Framer Motion tilt |
+
+### Custom Animations (`frontend/tailwind.config.js`)
+
+17 keyframe animations added/extended: `fade-in`, `slide-up`, `slide-down`, `slide-left`, `scale-in`, `float`, `float-slow`, `pulse-slow`, `gradient-x`, `gradient-text`, `bounce-slow`, `spin-slow`, `wiggle`, `glow-pulse`, `shimmer`, `gradient-border`, `tilt-in`, `card-entrance`, `heartbeat`.
+
+Also added: `backgroundSize: { '300%': '300%' }`, custom `boxShadow` (glow/glass/3d variants), and `surface`/`glow` color tokens.
+
+### Component-by-Component Animation Map
+
+| Component | File | Animation |
+|-----------|------|-----------|
+| Navbar | `components/Navbar.jsx` | Spring slide-in on mount, `layoutId` animated active-pill, 180° rotating theme toggle, `AnimatePresence` mobile menu with staggered items |
+| Footer | `components/Footer.jsx` | Gradient top border line, pulsing heart (scale 1→1.25), spring hover-lift on social icons |
+| ShortenForm | `components/ShortenForm.jsx` | Rotating gradient-border input, focus-driven icon scale+color, 3D button press, `AnimatePresence` advanced options + result card with glow |
+| LinkTable | `components/LinkTable.jsx` | Staggered row entrance (`delay: index * 0.05`), hover background shift, spring scale on action buttons |
+| StatCard | `components/StatCard.jsx` | **3D tilt-on-cursor** (`useMotionValue`→`useSpring`→`rotateX/rotateY`), glowing icon container, shimmer sweep overlay on hover |
+| DailyChart | `components/DailyChart.jsx` | Gradient-filled bars (SVG linearGradient), glow filter (`feGaussianBlur`), animated entrance, glass tooltip |
+| Spinner | `components/Spinner.jsx` | Dual-layer: rotating gradient ring + pulsing glow halo |
+| Toast | `components/Toast.jsx` | `AnimatePresence` slide+scale enter/exit, glassmorphic, auto-dismiss progress bar countdown |
+
+### Files Modified in UI Overhaul (logic untouched)
+
+```
+frontend/package.json            ← + framer-motion
+frontend/tailwind.config.js      ← palette, 17 animations, boxShadow tokens
+frontend/src/index.css           ← @property --angle, redesigned component classes, utilities
+frontend/src/components/Navbar.jsx
+frontend/src/components/Footer.jsx
+frontend/src/components/ShortenForm.jsx
+frontend/src/components/LinkTable.jsx
+frontend/src/components/StatCard.jsx
+frontend/src/components/DailyChart.jsx
+frontend/src/components/Spinner.jsx
+frontend/src/components/Toast.jsx
+frontend/src/pages/LandingPage.jsx
+frontend/src/pages/LoginPage.jsx
+frontend/src/pages/DashboardPage.jsx
+frontend/src/pages/StatsPage.jsx
+frontend/src/pages/TopLinksPage.jsx
+frontend/src/pages/AdminPage.jsx
+```
+
+### Files NOT Touched (pure logic — preserved exactly)
+
+```
+frontend/src/api/client.js           ← Axios interceptors, auth headers
+frontend/src/context/AuthContext.jsx ← Auth state management
+frontend/src/context/ToastContext.jsx ← Toast state management
+frontend/src/hooks/useAuth.js
+frontend/src/hooks/useToast.js
+frontend/src/utils/format.js          ← Formatting helpers
+frontend/src/components/ProtectedRoute.jsx ← Auth guard
+frontend/src/App.jsx                  ← Route definitions
+frontend/src/main.jsx                 ← Entry point
+```
+
+---
+
 ## 19. How to Run the FULL App (Both Parts)
 
 You need two terminals because the frontend and backend are separate servers:
@@ -1845,4 +1953,5 @@ Url-Shortner/
 | 4 | Done | Admin/Stats API |
 | 5 | Done | Observability (metrics) |
 | 6 | Done | Frontend UI (LinkSnip) + backend wiring |
+| 6a | Done | UI Overhaul — glassmorphism + 3D animation (Framer Motion), unique gradient inputs |
 | 7 | NEXT | Deployment — take the app live on the internet |

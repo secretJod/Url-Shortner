@@ -2,41 +2,244 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Register CSS @property for animated conic-gradient borders (the "unique" input) */
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     @apply antialiased;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(14, 165, 233, 0.08) 0px, transparent 50%),
+      radial-gradient(at 98% 1%, rgba(139, 92, 246, 0.08) 0px, transparent 50%),
+      radial-gradient(at 50% 99%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+    background-attachment: fixed;
   }
-  
-  /* Custom Scrollbar */
+
+  .dark body {
+    background-image:
+      radial-gradient(at 0% 0%, rgba(14, 165, 233, 0.12) 0px, transparent 50%),
+      radial-gradient(at 98% 1%, rgba(139, 92, 246, 0.12) 0px, transparent 50%),
+      radial-gradient(at 50% 99%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+  }
+
+  /* Custom Scrollbar — refined with gradient thumb */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-gray-100 dark:bg-gray-800;
+    @apply bg-gray-100 dark:bg-gray-900;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+    background: linear-gradient(180deg, #38bdf8, #8b5cf6);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400 dark:bg-gray-500;
+    background: linear-gradient(180deg, #0ea5e9, #7c3aed);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+
+  /* Selection color */
+  ::selection {
+    background: rgba(14, 165, 233, 0.25);
   }
 }
 
 @layer components {
+  /* ──────────────────────────────────────────────────────────
+     PRIMARY BUTTON — Google Material style
+     Flat solid fill, elevation shadow on hover, no gradients
+     ────────────────────────────────────────────────────────── */
   .btn-primary {
-    @apply px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-medium rounded-lg shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply px-5 py-2.5 font-medium rounded-md text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+    background-color: #1a73e8;
+    box-shadow: 0 1px 2px 0 rgba(26, 115, 232, 0.3), 0 1px 3px 0 rgba(0, 0, 0, 0.1);
   }
-  
-  .btn-secondary {
-    @apply px-4 py-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-medium rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
+  .btn-primary:hover:not(:disabled) {
+    background-color: #1765cc;
+    box-shadow: 0 2px 6px 0 rgba(26, 115, 232, 0.4), 0 4px 8px 0 rgba(0, 0, 0, 0.12);
   }
-  
-  .input-field {
-    @apply block w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 dark:focus:ring-brand-400 dark:focus:border-brand-400 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 transition-colors;
+  .btn-primary:active:not(:disabled) {
+    background-color: #1557b0;
+    box-shadow: 0 1px 2px 0 rgba(26, 115, 232, 0.3);
   }
 
+  /* ──────────────────────────────────────────────────────────
+     SECONDARY BUTTON — Google Material "Tonale" style
+     Subtle solid background tint, no border, elevation on hover
+     ────────────────────────────────────────────────────────── */
+  .btn-secondary {
+    @apply px-5 py-2.5 font-medium rounded-md text-brand-700 dark:text-brand-300 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
+    background-color: rgba(26, 115, 232, 0.08);
+    border: 1px solid transparent;
+  }
+  .dark .btn-secondary {
+    background-color: rgba(138, 180, 248, 0.12);
+  }
+  .btn-secondary:hover {
+    background-color: rgba(26, 115, 232, 0.14);
+    border-color: transparent;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.1), 0 1px 3px 0 rgba(0, 0, 0, 0.08);
+  }
+  .dark .btn-secondary:hover {
+    background-color: rgba(138, 180, 248, 0.2);
+  }
+  .btn-secondary:active {
+    background-color: rgba(26, 115, 232, 0.2);
+    box-shadow: none;
+  }
+
+  /* ──────────────────────────────────────────────────────────
+     INPUT FIELD — Google Material outlined style
+     Thin gray border by default → solid blue border on focus
+     Solid background, no gradient, no glow
+     ────────────────────────────────────────────────────────── */
+  .input-field {
+    @apply block w-full px-3.5 py-2.5 rounded-md text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 transition-all duration-200;
+    background-color: #ffffff;
+    border: 1px solid #80868b;
+    box-shadow: none;
+  }
+  .dark .input-field {
+    background-color: #1f2937;
+    border-color: #5f6368;
+  }
+  .input-field:hover {
+    border-color: #5f6368;
+    background-color: #ffffff;
+  }
+  .dark .input-field:hover {
+    border-color: #80868b;
+  }
+  .input-field:focus {
+    outline: none;
+    border: 2px solid #1a73e8;
+    padding-left: calc(0.875rem - 1px);
+    padding-right: calc(0.875rem - 1px);
+    padding-top: calc(0.625rem - 1px);
+    padding-bottom: calc(0.625rem - 1px);
+    background-color: #ffffff;
+    box-shadow: none;
+  }
+  .dark .input-field:focus {
+    background-color: #1f2937;
+    border-color: #8ab4f8;
+  }
+
+  /* ──────────────────────────────────────────────────────────
+     CARD — glassmorphic surface with subtle border + hover lift
+     ────────────────────────────────────────────────────────── */
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200;
+    @apply relative rounded-2xl p-6 transition-all duration-300;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  }
+  .dark .card {
+    background: rgba(31, 41, 55, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  .card:hover {
+    box-shadow: 0 20px 50px -10px rgba(14, 165, 233, 0.15);
+    transform: translateY(-2px);
+  }
+  .dark .card:hover {
+    box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
+  }
+
+  /* ──────────────────────────────────────────────────────────
+     CARD with no padding variant (for tables)
+     ────────────────────────────────────────────────────────── */
+  .card-flush {
+    @apply card p-0 overflow-hidden;
+  }
+}
+
+@layer utilities {
+  /* Animated gradient text — used for hero headlines */
+  .text-gradient-animated {
+    background: linear-gradient(90deg, #0ea5e9, #6366f1, #8b5cf6, #0ea5e9);
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: gradientText 4s ease infinite;
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #0ea5e9, #8b5cf6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* 3D perspective container for hover tilt cards */
+  .perspective {
+    perspective: 1000px;
+  }
+  .perspective-near {
+    perspective: 600px;
+  }
+
+  /* Preserve 3D for nested transforms */
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  /* Shimmer highlight for medals/badges */
+  .shimmer-surface {
+    background: linear-gradient(
+      110deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.4) 50%,
+      transparent 70%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2.5s linear infinite;
+  }
+
+  /* Animated rotating gradient border wrapper (for unique inputs) */
+  .gradient-border-wrap {
+    position: relative;
+    border-radius: 0.85rem;
+    padding: 2px;
+    background: conic-gradient(
+      from var(--angle),
+      #0ea5e9,
+      #6366f1,
+      #8b5cf6,
+      #ec4899,
+      #0ea5e9
+    );
+    animation: gradientBorder 3s linear infinite;
+  }
+
+  /* Frosted glass overlay */
+  .glass {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  .dark .glass {
+    background: rgba(17, 24, 39, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* Hover glow utility */
+  .hover-glow:hover {
+    box-shadow: 0 0 30px rgba(14, 165, 233, 0.3);
   }
 }

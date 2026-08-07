@@ -4,6 +4,16 @@ import ShortenForm from '../components/ShortenForm';
 import StatCard from '../components/StatCard';
 import apiClient from '../api/client';
 import Spinner from '../components/Spinner';
+import { motion } from 'framer-motion';
+
+const container = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
+};
+const item = {
+  hidden: { opacity: 0, y: 30 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 200, damping: 20 } },
+};
 
 export default function LandingPage() {
   const [stats, setStats] = useState({ totalLinks: 0, totalClicks: 0 });
@@ -26,82 +36,173 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="py-12 space-y-16 overflow-hidden">
+    <div className="py-12 space-y-20 overflow-hidden relative">
+      {/* Decorative floating orbs */}
+      <motion.div
+        className="absolute top-20 left-10 w-72 h-72 bg-brand-400/20 dark:bg-brand-500/10 rounded-full blur-3xl pointer-events-none"
+        animate={{ y: [0, -30, 0], x: [0, 20, 0] }}
+        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute top-40 right-10 w-80 h-80 bg-purple-400/20 dark:bg-purple-500/10 rounded-full blur-3xl pointer-events-none"
+        animate={{ y: [0, 40, 0], x: [0, -20, 0] }}
+        transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+      />
+
       {/* Hero Section */}
-      <div className="text-center space-y-6 max-w-4xl mx-auto animate-slide-up">
-        <div className="inline-flex items-center px-3 py-1 rounded-full bg-brand-100 dark:bg-brand-900/50 text-brand-800 dark:text-brand-200 text-sm font-medium mb-4 animate-bounce-slow">
-          <Zap className="w-4 h-4 mr-1" />
+      <motion.div
+        variants={container}
+        initial="hidden"
+        animate="show"
+        className="text-center space-y-6 max-w-4xl mx-auto relative z-10"
+      >
+        <motion.div
+          variants={item}
+          className="inline-flex items-center px-4 py-1.5 rounded-full glass border border-brand-400/30 text-brand-700 dark:text-brand-300 text-sm font-medium shadow-glow-brand"
+        >
+          <Zap className="w-4 h-4 mr-1.5 animate-pulse" />
           Enterprise-Grade URL Shortening
-        </div>
-        <h1 className="text-4xl md:text-6xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+        </motion.div>
+
+        <motion.h1
+          variants={item}
+          className="text-4xl md:text-6xl font-extrabold text-gray-900 dark:text-white tracking-tight"
+        >
           Shorten, Share, and{' '}
-          <span className="text-brand-600 dark:text-brand-400 animate-pulse-slow">Analyze</span>{' '}
+          <span className="text-gradient-animated">Analyze</span>{' '}
           Your Links
-        </h1>
-        <p className="text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto animate-fade-in">
-          Create short, memorable links in seconds. Track every click with detailed analytics 
+        </motion.h1>
+
+        <motion.p
+          variants={item}
+          className="text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto"
+        >
+          Create short, memorable links in seconds. Track every click with detailed analytics
           and powerful enterprise features.
-        </p>
-      </div>
+        </motion.p>
+      </motion.div>
 
       {/* Shorten Form */}
-      <div className="max-w-3xl mx-auto animate-scale-in">
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4, duration: 0.5 }}
+        className="max-w-3xl mx-auto relative z-10"
+      >
         <ShortenForm />
-      </div>
+      </motion.div>
 
       {/* Feature Highlights */}
-      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 animate-slide-up">
-        <div className="card p-6 text-center hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-brand-100 dark:bg-brand-900/50 flex items-center justify-center animate-float">
-            <TrendingUp className="w-6 h-6 text-brand-600 dark:text-brand-400" />
-          </div>
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Real-Time Analytics</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400">Track every click with detailed charts and insights.</p>
-        </div>
-        <div className="card p-6 text-center hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center animate-float" style={{ animationDelay: '0.5s' }}>
-            <BarChart3 className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-          </div>
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Smart Insights</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400">See top referrers, devices, and daily click trends.</p>
-        </div>
-        <div className="card p-6 text-center hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/50 flex items-center justify-center animate-float" style={{ animationDelay: '1s' }}>
-            <ShieldCheck className="w-6 h-6 text-green-600 dark:text-green-400" />
-          </div>
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Enterprise Security</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400">API keys, rate limiting, and privacy-first IP hashing.</p>
-        </div>
-      </div>
+      <motion.div
+        variants={container}
+        initial="hidden"
+        whileInView="show"
+        viewport={{ once: true, amount: 0.2 }}
+        className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10"
+      >
+        <FeatureCard
+          icon={TrendingUp}
+          title="Real-Time Analytics"
+          desc="Track every click with detailed charts and insights."
+          color="brand"
+        />
+        <FeatureCard
+          icon={BarChart3}
+          title="Smart Insights"
+          desc="See top referrers, devices, and daily click trends."
+          color="purple"
+        />
+        <FeatureCard
+          icon={ShieldCheck}
+          title="Enterprise Security"
+          desc="API keys, rate limiting, and privacy-first IP hashing."
+          color="green"
+        />
+      </motion.div>
 
       {/* Stats Preview */}
-      <div className="max-w-5xl mx-auto">
-        <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-8 animate-fade-in">
+      <motion.div
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        viewport={{ once: true }}
+        transition={{ duration: 0.5 }}
+        className="max-w-5xl mx-auto relative z-10"
+      >
+        <motion.h2
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="text-3xl font-bold text-center text-gradient mb-8"
+        >
           Trusted by Thousands
-        </h2>
+        </motion.h2>
         {loadingStats ? (
           <Spinner />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-            <div className="animate-scale-in">
-              <StatCard 
-                title="Links Shortened" 
-                value={stats.totalLinks.toLocaleString()} 
-                icon={Link2} 
-                color="brand" 
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.1, type: 'spring', stiffness: 200 }}
+            >
+              <StatCard
+                title="Links Shortened"
+                value={stats.totalLinks.toLocaleString()}
+                icon={Link2}
+                color="brand"
               />
-            </div>
-            <div className="animate-scale-in" style={{ animationDelay: '0.2s' }}>
-              <StatCard 
-                title="Total Clicks Tracked" 
-                value={stats.totalClicks.toLocaleString()} 
-                icon={MousePointerClick} 
-                color="purple" 
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.25, type: 'spring', stiffness: 200 }}
+            >
+              <StatCard
+                title="Total Clicks Tracked"
+                value={stats.totalClicks.toLocaleString()}
+                icon={MousePointerClick}
+                color="purple"
               />
-            </div>
+            </motion.div>
           </div>
         )}
-      </div>
+      </motion.div>
     </div>
+  );
+}
+
+function FeatureCard({ icon: Icon, title, desc, color }) {
+  const colorMap = {
+    brand: { bg: 'bg-brand-50 dark:bg-brand-900/30', text: 'text-brand-600 dark:text-brand-400', glow: 'rgba(14,165,233,0.4)' },
+    purple: { bg: 'bg-purple-50 dark:bg-purple-900/30', text: 'text-purple-600 dark:text-purple-400', glow: 'rgba(139,92,246,0.4)' },
+    green: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-600 dark:text-green-400', glow: 'rgba(16,185,129,0.4)' },
+  };
+  const c = colorMap[color];
+
+  return (
+    <motion.div
+      variants={item}
+      whileHover={{ y: -8, rotateX: 5, rotateY: -5 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      style={{ transformPerspective: 800 }}
+      className="card p-6 text-center group relative overflow-hidden"
+    >
+      <div
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+        style={{ background: `radial-gradient(circle at 50% 0%, ${c.glow}, transparent 70%)` }}
+      />
+      <motion.div
+        animate={{ y: [0, -8, 0] }}
+        transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+        className={`relative w-14 h-14 mx-auto mb-4 rounded-2xl ${c.bg} flex items-center justify-center`}
+        style={{ boxShadow: `0 0 25px ${c.glow}` }}
+      >
+        <Icon className={`w-7 h-7 ${c.text}`} />
+      </motion.div>
+      <h3 className="relative font-semibold text-gray-900 dark:text-white mb-2">{title}</h3>
+      <p className="relative text-sm text-gray-600 dark:text-gray-400">{desc}</p>
+    </motion.div>
   );
 }
