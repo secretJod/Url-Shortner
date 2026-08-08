@@ -1955,3 +1955,92 @@ Url-Shortner/
 | 6 | Done | Frontend UI (LinkSnip) + backend wiring |
 | 6a | Done | UI Overhaul — glassmorphism + 3D animation (Framer Motion), unique gradient inputs |
 | 7 | NEXT | Deployment — take the app live on the internet |
+
+
+---
+
+## 22. Monitoring with Grafana & Prometheus (Planned)
+
+### What is this?
+
+Right now the app has a /metrics endpoint (Phase 5) that returns JSON. To make it easy to watch the app live with beautiful charts, we plan to add:
+
+- **Prometheus** — a tool that collects (scrapes) the metrics every few seconds and stores them
+- **Grafana** — a dashboard tool that draws beautiful live charts from Prometheus data
+
+### What You Will Be Able to Watch (dashboards)
+
+| Chart | What It Shows |
+|-------|---------------|
+| Requests per second | How many people are using the app right now |
+| Response time (avg/max) | How fast the app responds |
+| Status codes (200/404/429) | Successes vs errors vs rate-limited |
+| Cache hit rate | How often Redis cache avoids hitting the database |
+| Events processed | How many click analytics events the worker handled |
+| Uptime | How long the app has been running |
+
+### How It Fits Together
+
+App (/metrics) -> Prometheus (collects) -> Grafana (charts) -> You (watch)
+
+### Where It Runs
+
+- **Local/dev**: via docker-compose — Prometheus on port 9090, Grafana on port 3000
+- **Production**: Grafana Cloud (free tier) or hosted alongside the app
+
+### Files to Be Added (future)
+
+- prometheus.yml (Prometheus config)
+- grafana/dashboard.json (pre-built dashboard)
+- grafana/datasource.yml (Grafana to Prometheus connection)
+- Update docker-compose.yml (add Prometheus + Grafana services)
+- Update DEPLOYMENT.md (Grafana access instructions)
+
+### How to Open Grafana (once added)
+
+1. Open http://localhost:3000
+2. Login: admin / admin
+3. The URL Shortener dashboard is already loaded with live charts
+---
+
+## 23. Prometheus & Grafana Monitoring (Implemented)
+
+### What is this?
+
+The app now exposes Prometheus-format metrics at /metrics, ready for Prometheus to scrape and Grafana to visualize. This is observability-only — no business logic was changed.
+
+### Metrics Exposed
+
+| Metric | Type | Labels | What It Shows |
+|--------|------|--------|---------------|
+| urlshortener_http_requests_total | Counter | method, path, status | Total HTTP requests (uses registered route paths like /:shortCode, not raw URLs) |
+| urlshortener_http_request_duration_seconds | Histogram | method, path | HTTP request duration |
+| urlshortener_redirects_total | Counter | result (success, not_found, error) | Redirect outcomes |
+| urlshortener_rate_limit_total | Counter | result (allowed, limited) | Rate-limit decisions |
+| urlshortener_analytics_events_processed_total | Counter | - | Analytics events written to Postgres |
+| urlshortener_analytics_events_failed_total | Counter | - | Analytics events that failed |
+| urlshortener_analytics_processing_duration_seconds | Histogram | - | Time to process analytics events |
+
+Plus standard Go runtime and process metrics (go_goroutines, process_cpu_seconds_total, etc.) provided by the Prometheus client.
+
+### Files Added/Changed
+
+| File | Change |
+|------|--------|
+| backend/internal/metrics/prometheus.go | ADDED - Prometheus metric definitions (registered once via promauto) |
+| backend/internal/middleware/prometheus.go | ADDED - HTTP metrics middleware using registered route paths |
+| backend/cmd/api/main.go | /metrics endpoint now serves Prometheus text format; Prometheus middleware added |
+| backend/internal/handlers/redirect.go | ADDITIVE - records redirect success/not_found/error |
+| backend/internal/middleware/ratelimit.go | ADDITIVE - records allowed/limited decisions |
+| backend/internal/worker/worker.go | ADDITIVE - records analytics processed/failed/duration |
+| backend/go.mod, go.sum | Added prometheus/client_golang dependency |
+
+### How Prometheus + Grafana Use This
+
+App (/metrics) -> Prometheus (scrapes every N seconds) -> Grafana (dashboards) -> You
+
+To run locally, add Prometheus (port 9090) and Grafana (port 3000) via docker-compose. Grafana connects to Prometheus as the data source and imports a dashboard querying these metrics.
+
+### How to Check
+
+curl http://localhost:8080/metrics

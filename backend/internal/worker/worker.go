@@ -7,6 +7,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/yourorg/urlshortener/internal/metrics"
 	"github.com/yourorg/urlshortener/internal/redis"
 	"github.com/yourorg/urlshortener/internal/store"
 )
@@ -89,14 +90,18 @@ func (w *AnalyticsWorker) run(ctx context.Context) {
 				IPHash:     ev.IPHash,
 			}
 
+			start := time.Now()
 			if err := w.Store.CreateClickEvent(ctx, clickEvent); err != nil {
 				// If a single event fails to write, we skip it and
 				// don't ACK it — it stays in the pending entries list
 				// and can be re-processed later. We DO continue
 				// processing the rest of the batch.
+				metrics.AnalyticsEventsFailed.Inc()
 				log.Printf("analytics worker: failed to write click event (stream id=%s): %v", ids[i], err)
 				continue
 			}
+			metrics.AnalyticsEventsProcessed.Inc()
+			metrics.AnalyticsProcessingDuration.Observe(time.Since(start).Seconds())
 			ackIDs = append(ackIDs, ids[i])
 		}
 

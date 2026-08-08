@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/yourorg/urlshortener/internal/metrics"
 	"github.com/yourorg/urlshortener/internal/redis"
 )
 
@@ -55,6 +56,7 @@ func RateLimit(rdb *redis.Client) fiber.Handler {
 			return c.Next()
 		}
 		if !allowed {
+			metrics.RateLimitTotal.WithLabelValues("limited").Inc()
 			c.Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error":       "rate limit exceeded",
@@ -62,6 +64,7 @@ func RateLimit(rdb *redis.Client) fiber.Handler {
 			})
 		}
 
+		metrics.RateLimitTotal.WithLabelValues("allowed").Inc()
 		return c.Next()
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/expfmt"
 
 	"github.com/yourorg/urlshortener/internal/config"
 	"github.com/yourorg/urlshortener/internal/db"
@@ -58,16 +60,30 @@ func main() {
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
-	// Phase 5: Metrics middleware
+	// Phase 5: Metrics middleware (atomic counters — kept for backward compat)
 	appMetrics := metrics.New()
 	app.Use(middleware.MetricsMiddleware(appMetrics))
+
+	// Prometheus metrics middleware (additive — records HTTP metrics with route paths)
+	app.Use(middleware.PrometheusMetricsMiddleware())
 
 	health := handlers.NewHealthHandler(rdb)
 	app.Get("/health", health.Check)
 
-	// Phase 5: Metrics endpoint
+	// Prometheus /metrics endpoint — standard Prometheus exposition format
 	app.Get("/metrics", func(c *fiber.Ctx) error {
-		return c.JSON(appMetrics.Snapshot())
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to gather metrics"})
+		}
+		c.Type("text/plain", "version=0.0.4")
+		enc := expfmt.NewEncoder(c.Response().BodyWriter(), expfmt.FmtText)
+		for _, mf := range mfs {
+			if err := enc.Encode(mf); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to encode metrics"})
+			}
+		}
+		return nil
 	})
 
 	// Auth + rate limit middleware

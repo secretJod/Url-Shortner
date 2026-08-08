@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/yourorg/urlshortener/internal/metrics"
 	"github.com/yourorg/urlshortener/internal/redis"
 	"github.com/yourorg/urlshortener/internal/store"
 )
@@ -32,6 +33,7 @@ func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
 		if linkID > 0 {
 			h.fireClickEvent(ctx, linkID, c)
 		}
+		metrics.RedirectsTotal.WithLabelValues("success").Inc()
 		return c.Redirect(longURL, fiber.StatusFound)
 	}
 	if !errors.Is(err, redis.ErrCacheMiss) {
@@ -44,8 +46,10 @@ func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
 	link, err := h.Store.GetLinkByShortCode(ctx, shortCode)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
+			metrics.RedirectsTotal.WithLabelValues("not_found").Inc()
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "short link not found or expired"})
 		}
+		metrics.RedirectsTotal.WithLabelValues("error").Inc()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to resolve short link"})
 	}
 
@@ -55,6 +59,7 @@ func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
 	// 4. Fire-and-forget click event for analytics (Phase 3).
 	h.fireClickEvent(ctx, link.ID, c)
 
+	metrics.RedirectsTotal.WithLabelValues("success").Inc()
 	return c.Redirect(link.LongURL, fiber.StatusFound)
 }
 
