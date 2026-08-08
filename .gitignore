@@ -1,14 +1,56 @@
-# Frontend
-frontend/node_modules/
-frontend/dist/
+# ─── Environment & Secrets ───────────────────────────────
+.env
+.env.*
+!.env.example
+backend/.env
 frontend/.env
 
-# Backend (handled by backend/.gitignore)
-backend/.env
+# ─── Frontend (React/Vite) ───────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/*.log
 
-# Tool-generated
-.zcode/
+# ─── Backend (Go) — most handled by backend/.gitignore ───
+backend/bin/
+backend/api
+backend/*.log
 
-# OS
+# ─── Logs ────────────────────────────────────────────────
+*.log
+logs/
+*.pid
+
+# ─── Build artifacts ─────────────────────────────────────
+dist/
+build/
+out/
+*.exe
+*.test
+*.out
+
+# ─── Prisma generated client (regenerated from schema) ───
+backend/internal/db/prisma/
+
+# ─── Docker ──────────────────────────────────────────────
+pg_data/
+redis_data/
+*.pid
+
+# ─── IDE / Editor ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+
+# ─── OS ──────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+.DS_Store?
+
+# ─── Tool-generated ──────────────────────────────────────
+.zcode/
+.ai/plans/
