@@ -16,13 +16,20 @@ RUN apt-get update && apt-get install -y \
     sudo \
     docker.io \
     docker-compose-v2 \
+    libicu70 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m runner && usermod -aG docker runner
 WORKDIR /home/runner
 
-RUN curl -o actions-runner.tar.gz -L \
-    https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
+RUN ARCH=$(dpkg --print-architecture) \
+    && case "$ARCH" in \
+         amd64) RUNNER_ARCH=x64 ;; \
+         arm64) RUNNER_ARCH=arm64 ;; \
+         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
+       esac \
+    && curl -o actions-runner.tar.gz -L \
+    https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz \
     && tar xzf ./actions-runner.tar.gz \
     && rm actions-runner.tar.gz \
     && chown -R runner:runner /home/runner
