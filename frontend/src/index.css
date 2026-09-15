@@ -125,8 +125,6 @@
   .input-field:focus {
     outline: none;
     border: 2px solid #1a73e8;
-    padding-left: calc(0.875rem - 1px);
-    padding-right: calc(0.875rem - 1px);
     padding-top: calc(0.625rem - 1px);
     padding-bottom: calc(0.625rem - 1px);
     background-color: #ffffff;
