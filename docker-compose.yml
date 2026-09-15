@@ -40,6 +40,20 @@ services:
       - "1025:1025" # SMTP
       - "8025:8025" # Web UI
 
+  migrate:
+    image: golang:1.25-alpine
+    container_name: urlshortener-migrate
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: "postgresql://urlshortener:urlshortener_dev_pw@postgres:5432/urlshortener?schema=public"
+    command: sh -c "apk add --no-cache git openssl && go run github.com/steebchen/prisma-client-go db push"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -70,6 +84,8 @@ services:
         condition: service_healthy
       mailhog:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 10s
