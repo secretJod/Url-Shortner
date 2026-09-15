@@ -17,11 +17,14 @@ export function AuthProvider({ children }) {
     }
   }, [apiKey]);
 
-  const login = useCallback(async (email) => {
+  // requestVerification kicks off email verification (SEC-01) — the
+  // backend no longer returns a key from this call, it sends a magic
+  // link instead. The key is only available once that link is clicked
+  // (which redeems it via GET /api/keys/verify), so the caller pastes it
+  // back in via importKey.
+  const requestVerification = useCallback(async (email) => {
     const response = await apiClient.post('/api/keys', { email });
-    const newKey = response.data.api_key;
-    setApiKey(newKey);
-    return newKey;
+    return response.data.message;
   }, []);
 
   const importKey = useCallback((key) => {
@@ -33,7 +36,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ apiKey, isAuthenticated, login, importKey, logout }}>
+    <AuthContext.Provider value={{ apiKey, isAuthenticated, requestVerification, importKey, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,35 +1,34 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { KeyRound, Mail, Copy, Check, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Mail, ArrowRight, MailCheck } from 'lucide-react';
 import { isValidApiKey } from '../utils/format';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function LoginPage() {
-  const { login, importKey } = useAuth();
+  const { requestVerification, importKey } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [generatedKey, setGeneratedKey] = useState(null);
-  const [copied, setCopied] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
 
   const [existingKey, setExistingKey] = useState('');
 
-  const handleGenerateKey = async (e) => {
+  const handleRequestVerification = async (e) => {
     e.preventDefault();
     if (!email) return;
 
     setLoading(true);
     try {
-      const key = await login(email);
-      setGeneratedKey(key);
-      showToast('API Key generated! Save it now.', 'success');
+      await requestVerification(email);
+      setVerificationSent(true);
+      showToast('Verification email sent!', 'success');
     } catch (error) {
-      showToast(error.message || 'Failed to generate API key', 'error');
+      showToast(error.message || 'Failed to send verification email', 'error');
     } finally {
       setLoading(false);
     }
@@ -44,13 +43,6 @@ export default function LoginPage() {
     importKey(existingKey);
     showToast('API Key imported successfully!', 'success');
     navigate('/dashboard');
-  };
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedKey);
-    setCopied(true);
-    showToast('Copied to clipboard!', 'success');
-    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -69,9 +61,9 @@ export default function LoginPage() {
 
       <div className="max-w-md w-full mx-auto space-y-8 relative z-10">
         <AnimatePresence mode="wait">
-          {generatedKey ? (
+          {verificationSent ? (
             <motion.div
-              key="key-display"
+              key="verification-sent"
               initial={{ opacity: 0, scale: 0.85, rotateY: -90 }}
               animate={{ opacity: 1, scale: 1, rotateY: 0 }}
               exit={{ opacity: 0, scale: 0.85, rotateY: 90 }}
@@ -84,41 +76,33 @@ export default function LoginPage() {
                 transition={{ type: 'spring', stiffness: 300, damping: 15, delay: 0.2 }}
                 className="mx-auto w-16 h-16 bg-gradient-to-br from-green-400 to-emerald-600 rounded-2xl flex items-center justify-center shadow-glow-green"
               >
-                <KeyRound className="w-8 h-8 text-white" />
+                <MailCheck className="w-8 h-8 text-white" />
               </motion.div>
-              <h2 className="text-2xl font-bold text-gradient">Your API Key is Ready</h2>
+              <h2 className="text-2xl font-bold text-gradient">Check your email</h2>
 
-              <div className="bg-yellow-50/80 dark:bg-yellow-900/20 backdrop-blur-md border border-yellow-300/50 dark:border-yellow-700/50 rounded-xl p-4 flex items-start space-x-3 text-left">
-                <AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5 animate-pulse" />
-                <div>
-                  <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200">Warning: Save this key now!</p>
-                  <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
-                    For security reasons, this key will only be shown once. If you lose it, you will need to generate a new one.
-                  </p>
-                </div>
+              <div className="bg-gray-50/80 dark:bg-gray-900/50 backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 rounded-xl p-4 text-left text-sm text-gray-700 dark:text-gray-300">
+                <p>
+                  We sent a verification link to <span className="font-medium">{email}</span>. Click it to get your API key.
+                </p>
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Running locally? Open the MailHog UI at{' '}
+                  <a href="http://localhost:8025" className="text-brand-600 dark:text-brand-400 underline">
+                    localhost:8025
+                  </a>{' '}
+                  to view it.
+                </p>
               </div>
 
-              <div className="bg-gray-50/80 dark:bg-gray-900/50 backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 rounded-xl p-4 break-all font-mono text-sm text-gray-800 dark:text-gray-200 relative">
-                {generatedKey}
-                <div className="absolute inset-0 shimmer-surface opacity-30 pointer-events-none rounded-xl" />
-              </div>
-
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={copyToClipboard}
-                className="btn-primary w-full flex items-center justify-center space-x-2"
-              >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'Copied!' : 'Copy to Clipboard'}</span>
-              </motion.button>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Once you have your key, paste it below using "Import Existing Key".
+              </p>
 
               <motion.button
                 whileHover={{ x: 4 }}
-                onClick={() => navigate('/dashboard')}
+                onClick={() => setVerificationSent(false)}
                 className="text-gradient hover:opacity-80 text-sm font-medium flex items-center justify-center space-x-1 mx-auto transition-opacity"
               >
-                <span>I've saved it, go to Dashboard</span>
+                <span>Use a different email</span>
                 <ArrowRight className="w-4 h-4" />
               </motion.button>
             </motion.div>
@@ -146,7 +130,7 @@ export default function LoginPage() {
                   className="absolute top-0 left-0 right-0 h-1"
                   style={{ backgroundImage: 'linear-gradient(90deg, #0ea5e9, #8b5cf6)' }}
                 />
-                <form onSubmit={handleGenerateKey} className="space-y-4">
+                <form onSubmit={handleRequestVerification} className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                       Email Address
@@ -180,8 +164,8 @@ export default function LoginPage() {
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <>
-                        <KeyRound className="w-4 h-4" />
-                        <span>Generate API Key</span>
+                        <Mail className="w-4 h-4" />
+                        <span>Send Verification Email</span>
                       </>
                     )}
                   </motion.button>

@@ -54,3 +54,35 @@ func GetAPIKey(c *fiber.Ctx) *store.ApiKey {
 	}
 	return nil
 }
+
+// RequireAPIKeyAuth validates an `Authorization: Bearer <key>` header and
+// rejects the request outright if it's missing or invalid. Used for
+// endpoints that must always be scoped to an owner (SEC-02), unlike
+// OptionalAPIKeyAuth which lets anonymous requests through.
+func RequireAPIKeyAuth(s store.ApiKeyStore) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		header := c.Get("Authorization")
+		if header == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required"})
+		}
+
+		rawKey, err := auth.ExtractBearerToken(header)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "malformed Authorization header, expected: Bearer <api_key>",
+			})
+		}
+
+		hash := auth.HashKey(rawKey)
+		apiKey, err := s.GetAPIKeyByHash(c.Context(), hash)
+		if err != nil {
+			if err == store.ErrNotFound {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid API key"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to validate API key"})
+		}
+
+		c.Locals(LocalsAPIKey, apiKey)
+		return c.Next()
+	}
+}

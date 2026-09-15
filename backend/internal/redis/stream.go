@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -59,15 +60,19 @@ func (c *Client) PushClickEvent(ctx context.Context, ev ClickEvent) error {
 	}).Err()
 }
 
-// HashIP hashes a raw IP address for privacy. The hash is one-way
-// (SHA-256) so the original IP can't be recovered from the stored
-// analytics data. A salt could be added later for stronger protection.
-func HashIP(ip string) string {
+// HashIP hashes a raw IP address for privacy, keyed with secret via
+// HMAC-SHA256 so the original IP can't be recovered from stored analytics
+// data even if the hashing scheme (SHA-256 of a bare IP) were guessed and
+// brute-forced against the small IPv4 address space. secret should come
+// from IP_HASH_SECRET.
+func HashIP(ip, secret string) string {
 	if ip == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(ip))
-	return hex.EncodeToString(sum[:])[:16] // first 16 hex chars (64 bits) is enough for dedup
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ip))
+	sum := mac.Sum(nil)
+	return hex.EncodeToString(sum)[:16] // first 16 hex chars (64 bits) is enough for dedup
 }
 
 // ReadClickEvents reads up to `count` click events from the stream using

@@ -1,0 +1,56 @@
+{
+  "title": "URL Shortener Overview",
+  "uid": "urlshortener-overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_http_requests_total[1m])) by (path, status)",
+          "legendFormat": "{{path}} [{{status}}]"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Redirects by Result",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_redirects_total[1m])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Rate Limit Decisions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_rate_limit_total[1m])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "API Up",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "up{job=\"urlshortener\"}" }
+      ]
+    }
+  ]
+}

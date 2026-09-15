@@ -1,0 +1,28 @@
+name: Deploy
+
+# Runs on a self-hosted runner (see deploy/README.md) that simulates a cloud
+# VM: it's a container, running Docker, registered as a GitHub Actions
+# runner against this repo. This job pulls the image CI just pushed to
+# ghcr.io and brings up the full stack with docker compose, right there.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull latest images
+        run: docker compose pull --ignore-pull-failures
+
+      - name: Deploy stack
+        run: docker compose up -d --build
+
+      - name: Show running services
+        run: docker compose ps

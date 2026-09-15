@@ -43,7 +43,21 @@ func (w *AnalyticsWorker) Start(ctx context.Context) {
 	go w.run(ctx)
 }
 
+// run drains the stream forever, restarting the loop body if it panics
+// so a bug in analytics processing can't take down the whole worker (and,
+// since Start launches this in its own goroutine, can't crash the API
+// process either — an unrecovered panic in any goroutine kills the
+// process regardless of fiber's recover() middleware on the HTTP path).
 func (w *AnalyticsWorker) run(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("analytics worker: recovered from panic: %v", r)
+			if ctx.Err() == nil {
+				go w.run(ctx)
+			}
+		}
+	}()
+
 	for {
 		// Check if we should stop.
 		if ctx.Err() != nil {

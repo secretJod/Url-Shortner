@@ -49,10 +49,11 @@ export default function DashboardPage() {
     if (!window.confirm(`Are you sure you want to delete /${shortCode}?`)) return;
 
     try {
+      await apiClient.delete(`/api/links/${shortCode}`);
       setLinks(links.filter(l => l.short_code !== shortCode));
       showToast('Link deleted successfully', 'success');
     } catch (error) {
-      showToast('Failed to delete link', 'error');
+      showToast(error.message || 'Failed to delete link', 'error');
     }
   };
 

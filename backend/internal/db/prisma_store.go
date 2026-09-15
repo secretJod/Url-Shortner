@@ -107,37 +107,131 @@ func (s *PrismaStore) GetLinkByShortCode(ctx context.Context, shortCode string) 
 	return result, nil
 }
 
-func (s *PrismaStore) GetOrCreateUserByEmail(ctx context.Context, email string) (*store.User, error) {
-	found, err := s.client.User.FindUnique(
-		User.Email.Equals(email),
+// DeleteLink removes a link by short code, along with its click events
+// (which would otherwise violate the ClickEvent -> Link foreign key).
+func (s *PrismaStore) DeleteLink(ctx context.Context, shortCode string) error {
+	found, err := s.client.Link.FindUnique(
+		Link.ShortCode.Equals(shortCode),
 	).Exec(ctx)
-
-	if err == nil {
-		return &store.User{
-			ID:        uint64(found.ID),
-			Email:     found.Email,
-			CreatedAt: found.CreatedAt,
-		}, nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return nil, err
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return store.ErrNotFound
+		}
+		return err
 	}
 
-	created, err := s.client.User.CreateOne(
+	if _, err := s.client.ClickEvent.FindMany(
+		ClickEvent.LinkID.Equals(types.BigInt(found.ID)),
+	).Delete().Exec(ctx); err != nil {
+		return err
+	}
+
+	if _, err := s.client.Link.FindUnique(
+		Link.ID.Equals(found.ID),
+	).Delete().Exec(ctx); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return store.ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// GetOrCreateUserByEmail returns the existing user for this email, or
+// creates one if it doesn't exist yet. Uses Upsert so two concurrent
+// requests for a brand-new email can't race each other into a unique
+// constraint violation (SEC fix — previously did a separate
+// FindUnique + CreateOne, which had a TOCTOU window).
+func (s *PrismaStore) GetOrCreateUserByEmail(ctx context.Context, email string) (*store.User, error) {
+	result, err := s.client.User.UpsertOne(
+		User.Email.Equals(email),
+	).Create(
 		User.Email.Set(email),
 		// PasswordHash isn't part of Phase 2's scope (no login yet), so we
 		// store an empty placeholder. Revisit if/when full auth is added.
 		User.PasswordHash.Set(""),
+	).Update(
+		// No-op update: upsert on an existing row just returns it as-is.
+		User.Email.Set(email),
 	).Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return &store.User{
-		ID:        uint64(created.ID),
-		Email:     created.Email,
-		CreatedAt: created.CreatedAt,
+		ID:        uint64(result.ID),
+		Email:     result.Email,
+		Verified:  result.Verified,
+		CreatedAt: result.CreatedAt,
 	}, nil
+}
+
+// MarkUserVerified flips a user's verified flag to true.
+func (s *PrismaStore) MarkUserVerified(ctx context.Context, userID uint64) error {
+	_, err := s.client.User.FindUnique(
+		User.ID.Equals(types.BigInt(userID)),
+	).Update(
+		User.Verified.Set(true),
+	).Exec(ctx)
+	return err
+}
+
+// CreateVerificationToken persists a new email-verification token.
+func (s *PrismaStore) CreateVerificationToken(ctx context.Context, t *store.VerificationToken) error {
+	created, err := s.client.VerificationToken.CreateOne(
+		VerificationToken.TokenHash.Set(t.TokenHash),
+		VerificationToken.User.Link(User.ID.Equals(types.BigInt(t.UserID))),
+		VerificationToken.ExpiresAt.Set(t.ExpiresAt),
+	).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	t.ID = uint64(created.ID)
+	t.CreatedAt = created.CreatedAt
+	return nil
+}
+
+// GetVerificationTokenByHash looks up a verification token by its hash.
+func (s *PrismaStore) GetVerificationTokenByHash(ctx context.Context, hash string) (*store.VerificationToken, error) {
+	found, err := s.client.VerificationToken.FindUnique(
+		VerificationToken.TokenHash.Equals(hash),
+	).Exec(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, store.ErrNotFound
+		}
+		return nil, err
+	}
+
+	return &store.VerificationToken{
+		ID:        uint64(found.ID),
+		TokenHash: found.TokenHash,
+		UserID:    uint64(found.UserID),
+		ExpiresAt: found.ExpiresAt,
+		CreatedAt: found.CreatedAt,
+	}, nil
+}
+
+// DeleteVerificationToken consumes (deletes) a verification token.
+func (s *PrismaStore) DeleteVerificationToken(ctx context.Context, id uint64) error {
+	_, err := s.client.VerificationToken.FindUnique(
+		VerificationToken.ID.Equals(types.BigInt(id)),
+	).Delete().Exec(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// Ping checks Postgres connectivity for health checks. Does a trivial
+// query rather than exposing the raw *sql.DB, since Prisma's Go client
+// doesn't give direct access to the underlying connection.
+func (s *PrismaStore) Ping(ctx context.Context) error {
+	_, err := s.client.User.FindMany().Take(1).Exec(ctx)
+	return err
 }
 
 func (s *PrismaStore) CreateAPIKey(ctx context.Context, k *store.ApiKey) error {
@@ -323,8 +417,12 @@ func (s *PrismaStore) GetTopLinks(ctx context.Context, limit int) ([]*store.Link
 	}
 
 	// Build LinkStats for each, sort by click count, take top N.
+	now := time.Now()
 	var results []*store.LinkStats
 	for _, l := range links {
+		if exp, ok := l.ExpiresAt(); ok && exp.Before(now) {
+			continue
+		}
 		link := &store.Link{
 			ID:          uint64(l.ID),
 			ShortCode:   l.ShortCode,
@@ -356,15 +454,19 @@ func (s *PrismaStore) GetTopLinks(ctx context.Context, limit int) ([]*store.Link
 	return results, nil
 }
 
-// GetUserLinks returns all links created by a specific user.
+// GetUserLinks returns all links created by a specific user, most
+// recently created first. Expired links are filtered out.
 func (s *PrismaStore) GetUserLinks(ctx context.Context, userID uint64) ([]*store.Link, error) {
 	found, err := s.client.Link.FindMany(
 		Link.UserID.Equals(types.BigInt(userID)),
-	).Exec(ctx)
+	).OrderBy(
+		Link.CreatedAt.Order(SortOrderDesc),
+	).Take(500).Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	now := time.Now()
 	var links []*store.Link
 	for _, l := range found {
 		link := &store.Link{
@@ -381,6 +483,9 @@ func (s *PrismaStore) GetUserLinks(ctx context.Context, userID uint64) ([]*store
 		if exp, ok := l.ExpiresAt(); ok {
 			link.ExpiresAt = &exp
 		}
+		if link.ExpiresAt != nil && link.ExpiresAt.Before(now) {
+			continue
+		}
 		links = append(links, link)
 	}
 	return links, nil
@@ -395,21 +500,16 @@ func (s *PrismaStore) GetRecentClickEvents(ctx context.Context, linkID uint64, l
 		limit = 100
 	}
 
+	// Ordering and limiting done DB-side (backed by the
+	// ClickEvent(linkId, timestamp) composite index) rather than fetching
+	// everything and sorting in Go.
 	found, err := s.client.ClickEvent.FindMany(
 		ClickEvent.LinkID.Equals(types.BigInt(linkID)),
-	).Exec(ctx)
+	).OrderBy(
+		ClickEvent.Timestamp.Order(SortOrderDesc),
+	).Take(limit).Exec(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	// Sort by timestamp descending (most recent first).
-	for i := 1; i < len(found); i++ {
-		for j := i; j > 0 && found[j].Timestamp.After(found[j-1].Timestamp); j-- {
-			found[j], found[j-1] = found[j-1], found[j]
-		}
-	}
-	if len(found) > limit {
-		found = found[:limit]
 	}
 
 	var events []*store.ClickEvent

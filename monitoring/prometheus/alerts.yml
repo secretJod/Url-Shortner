@@ -1,0 +1,24 @@
+groups:
+  - name: urlshortener
+    rules:
+      - alert: APIDown
+        expr: up{job="urlshortener"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "URL shortener API is down"
+          description: "Prometheus has not been able to scrape the api target for over 1 minute."
+
+      - alert: HighHTTPErrorRate
+        expr: |
+          sum(rate(urlshortener_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(urlshortener_http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate on the API"
+          description: "More than 5% of requests over the last 5 minutes resulted in a 5xx response."

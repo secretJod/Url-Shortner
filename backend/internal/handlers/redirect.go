@@ -13,12 +13,13 @@ import (
 )
 
 type RedirectHandler struct {
-	Store store.LinkStore
-	Redis *redis.Client
+	Store        store.LinkStore
+	Redis        *redis.Client
+	IPHashSecret string
 }
 
-func NewRedirectHandler(s store.LinkStore, r *redis.Client) *RedirectHandler {
-	return &RedirectHandler{Store: s, Redis: r}
+func NewRedirectHandler(s store.LinkStore, r *redis.Client, ipHashSecret string) *RedirectHandler {
+	return &RedirectHandler{Store: s, Redis: r, IPHashSecret: ipHashSecret}
 }
 
 func (h *RedirectHandler) Redirect(c *fiber.Ctx) error {
@@ -72,7 +73,7 @@ func (h *RedirectHandler) fireClickEvent(ctx context.Context, linkID uint64, c *
 		LinkID:    linkID,
 		Timestamp: time.Now().UnixNano(),
 		Referrer:  c.Get("Referer"),
-		IPHash:    redis.HashIP(c.IP()),
+		IPHash:    redis.HashIP(c.IP(), h.IPHashSecret),
 	}
 	// Ignore error — analytics is best-effort.
 	_ = h.Redis.PushClickEvent(ctx, ev)

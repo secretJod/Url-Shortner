@@ -32,6 +32,17 @@ type Link struct {
 type User struct {
 	ID        uint64
 	Email     string
+	Verified  bool
+	CreatedAt time.Time
+}
+
+// VerificationToken mirrors the Prisma VerificationToken model. Only the
+// hash of the raw token is ever persisted (same principle as API keys).
+type VerificationToken struct {
+	ID        uint64
+	TokenHash string
+	UserID    uint64
+	ExpiresAt time.Time
 	CreatedAt time.Time
 }
 
@@ -68,6 +79,10 @@ type LinkStore interface {
 	// GetLinkByShortCode fetches a link for the redirect hot path.
 	// Returns ErrNotFound if no such link exists.
 	GetLinkByShortCode(ctx context.Context, shortCode string) (*Link, error)
+
+	// DeleteLink removes a link (and its click events) by short code.
+	// Returns ErrNotFound if no such link exists.
+	DeleteLink(ctx context.Context, shortCode string) error
 }
 
 type UserStore interface {
@@ -75,6 +90,26 @@ type UserStore interface {
 	// creates one if it doesn't exist yet. Kept deliberately simple (no
 	// password) since Phase 2 only needs enough identity to own API keys.
 	GetOrCreateUserByEmail(ctx context.Context, email string) (*User, error)
+
+	// MarkUserVerified flips a user's verified flag to true.
+	MarkUserVerified(ctx context.Context, userID uint64) error
+}
+
+// VerificationTokenStore persists email-verification tokens used by the
+// key-issuance flow (SEC-01): a user must click a magic link before an
+// API key is issued to their email.
+type VerificationTokenStore interface {
+	// CreateVerificationToken persists a new verification token. Only the
+	// hash is stored — callers must not pass the raw token to this method.
+	CreateVerificationToken(ctx context.Context, t *VerificationToken) error
+
+	// GetVerificationTokenByHash looks up a token by its hash. Returns
+	// ErrNotFound if no such token exists (or it's already been consumed).
+	GetVerificationTokenByHash(ctx context.Context, hash string) (*VerificationToken, error)
+
+	// DeleteVerificationToken consumes (deletes) a verification token so
+	// it can't be replayed.
+	DeleteVerificationToken(ctx context.Context, id uint64) error
 }
 
 type ApiKeyStore interface {
@@ -98,11 +133,11 @@ type ClickEventStore interface {
 
 // LinkStats aggregates click analytics for a single link.
 type LinkStats struct {
-	Link         Link
-	TotalClicks  int64
-	UniqueIPs    int64
-	ReferrerTop  []string
-	DailyClicks  []DailyClicks
+	Link        Link
+	TotalClicks int64
+	UniqueIPs   int64
+	ReferrerTop []string
+	DailyClicks []DailyClicks
 }
 
 // DailyClicks groups click counts by calendar day.
@@ -137,4 +172,8 @@ type Store interface {
 	ApiKeyStore
 	ClickEventStore
 	StatsStore
+	VerificationTokenStore
+
+	// Ping checks database connectivity, for health checks.
+	Ping(ctx context.Context) error
 }

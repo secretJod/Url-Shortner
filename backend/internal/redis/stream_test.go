@@ -53,23 +53,30 @@ func TestPushAndReadClickEvent(t *testing.T) {
 }
 
 func TestHashIP(t *testing.T) {
+	const secret = "test-secret"
+
 	// Empty IP returns empty hash.
-	if got := HashIP(""); got != "" {
+	if got := HashIP("", secret); got != "" {
 		t.Errorf("HashIP(\"\") = %q, want \"\"", got)
 	}
 
-	// Same IP always produces the same hash (deterministic).
+	// Same IP + secret always produces the same hash (deterministic).
 	ip := "192.168.1.1"
-	h1 := HashIP(ip)
-	h2 := HashIP(ip)
+	h1 := HashIP(ip, secret)
+	h2 := HashIP(ip, secret)
 	if h1 != h2 {
 		t.Errorf("HashIP is not deterministic: %q != %q", h1, h2)
 	}
 
 	// Different IPs produce different hashes.
-	h3 := HashIP("10.0.0.1")
+	h3 := HashIP("10.0.0.1", secret)
 	if h1 == h3 {
 		t.Errorf("different IPs produced the same hash: %q", h1)
+	}
+
+	// Different secrets produce different hashes for the same IP (salted).
+	if h4 := HashIP(ip, "other-secret"); h4 == h1 {
+		t.Errorf("different secrets produced the same hash: %q", h1)
 	}
 
 	// Hash is 16 hex characters (64 bits).

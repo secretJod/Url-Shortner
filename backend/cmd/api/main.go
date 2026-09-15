@@ -18,6 +18,7 @@ import (
 	"github.com/yourorg/urlshortener/internal/config"
 	"github.com/yourorg/urlshortener/internal/db"
 	"github.com/yourorg/urlshortener/internal/handlers"
+	"github.com/yourorg/urlshortener/internal/mail"
 	"github.com/yourorg/urlshortener/internal/metrics"
 	"github.com/yourorg/urlshortener/internal/middleware"
 	"github.com/yourorg/urlshortener/internal/redis"
@@ -53,9 +54,10 @@ func main() {
 	app.Use(recover.New())
 	app.Use(logger.New())
 
-	// Phase 6: CORS — allow frontend dev server (Vite on :5173) to call the API
+	// CORS — origins are env-driven (CORS_ALLOWED_ORIGINS) rather than
+	// hardcoded, so prod deployments can lock this down without a code change.
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+		AllowOrigins: cfg.CORSAllowedOrigins,
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
@@ -67,7 +69,7 @@ func main() {
 	// Prometheus metrics middleware (additive — records HTTP metrics with route paths)
 	app.Use(middleware.PrometheusMetricsMiddleware())
 
-	health := handlers.NewHealthHandler(rdb)
+	health := handlers.NewHealthHandler(rdb, linkStore)
 	app.Get("/health", health.Check)
 
 	// Prometheus /metrics endpoint — standard Prometheus exposition format
@@ -88,20 +90,27 @@ func main() {
 
 	// Auth + rate limit middleware
 	authMW := middleware.OptionalAPIKeyAuth(linkStore)
+	requireAuthMW := middleware.RequireAPIKeyAuth(linkStore)
 	rateLimitMW := middleware.RateLimit(rdb)
 
-	apiKeys := handlers.NewAPIKeyHandler(linkStore)
+	mailer := mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.MailFrom)
+	apiKeys := handlers.NewAPIKeyHandler(linkStore, mailer, cfg.BaseURL)
 	app.Post("/api/keys", rateLimitMW, apiKeys.CreateKey)
+	app.Get("/api/keys/verify", rateLimitMW, apiKeys.VerifyKey)
 
 	shorten := handlers.NewShortenHandler(linkStore, rdb, cfg.BaseURL)
 	app.Post("/api/shorten", authMW, rateLimitMW, shorten.Shorten)
 
 	// Phase 4: Admin/Stats API (registered BEFORE /:shortCode)
-	stats := handlers.NewStatsHandler(linkStore)
+	// SEC-02: /api/stats/:shortCode and /api/links/:shortCode/clicks require
+	// an authenticated key AND ownership of the link (enforced in the
+	// handlers) — /api/stats/top stays public since it's aggregate-only.
+	stats := handlers.NewStatsHandler(linkStore, rdb)
 	app.Get("/api/stats/top", rateLimitMW, stats.GetTopLinks)
-	app.Get("/api/stats/:shortCode", rateLimitMW, stats.GetLinkStats)
+	app.Get("/api/stats/:shortCode", requireAuthMW, rateLimitMW, stats.GetLinkStats)
 	app.Get("/api/links", authMW, rateLimitMW, stats.GetUserLinks)
-	app.Get("/api/links/:shortCode/clicks", rateLimitMW, stats.GetRecentClicks)
+	app.Get("/api/links/:shortCode/clicks", requireAuthMW, rateLimitMW, stats.GetRecentClicks)
+	app.Delete("/api/links/:shortCode", requireAuthMW, rateLimitMW, stats.DeleteLink)
 
 	// Phase 6: Serve frontend static files (if frontend/dist exists)
 	app.Static("/", "./frontend/dist")
@@ -117,9 +126,11 @@ func main() {
 	app.Get("/top", serveIndex)
 	app.Get("/admin", serveIndex)
 
-	// Redirect route for short codes — fallback to SPA index.html if not a valid short code
-	redirect := handlers.NewRedirectHandler(linkStore, rdb)
-	app.Get("/:shortCode", func(c *fiber.Ctx) error {
+	// Redirect route for short codes — fallback to SPA index.html if not a valid short code.
+	// SEC-06: rate-limited per-IP (anonymous, since redirects carry no API key)
+	// to blunt scraping/enumeration of short codes.
+	redirect := handlers.NewRedirectHandler(linkStore, rdb, cfg.IPHashSecret)
+	app.Get("/:shortCode", rateLimitMW, func(c *fiber.Ctx) error {
 		err := redirect.Redirect(c)
 		if err != nil {
 			// Not a valid short code — serve the SPA index.html

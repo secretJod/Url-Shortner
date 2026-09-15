@@ -11,7 +11,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- Backend build stage ---
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 # Alpine's musl libc needs libc6-compat and openssl for Prisma's engine binaries
@@ -27,20 +27,28 @@ COPY backend/ ./
 # embedded matches the container's actual platform (Alpine/musl), not
 # whatever OS you're developing on (e.g. macOS). This was the cause of the
 # "ensure: no binary found" runtime error.
-RUN cd backend && go run github.com/steebchen/prisma-client-go prefetch
-RUN cd backend && go run github.com/steebchen/prisma-client-go generate
+RUN go run github.com/steebchen/prisma-client-go prefetch
+RUN go run github.com/steebchen/prisma-client-go generate
 
-RUN cd backend && CGO_ENABLED=0 GOOS=linux go build -o /urlshortener ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -o /urlshortener ./cmd/api
 
 # --- Run stage ---
 FROM alpine:3.19
-RUN apk --no-cache add ca-certificates openssl
-WORKDIR /root/
+RUN apk --no-cache add ca-certificates openssl wget && \
+    addgroup -S appgroup && adduser -S appuser -G appgroup
+WORKDIR /home/appuser/
 
 COPY --from=builder /urlshortener .
 
 # Copy frontend build (Phase 6)
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
+RUN chown -R appuser:appgroup /home/appuser
+USER appuser
+
 EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
+
 CMD ["./urlshortener"]
