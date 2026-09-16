@@ -8,12 +8,12 @@ import (
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/yourorg/urlshortener/internal/config"
 	"github.com/yourorg/urlshortener/internal/db"
@@ -72,21 +72,11 @@ func main() {
 	health := handlers.NewHealthHandler(rdb, linkStore)
 	app.Get("/health", health.Check)
 
-	// Prometheus /metrics endpoint — standard Prometheus exposition format
-	app.Get("/metrics", func(c *fiber.Ctx) error {
-		mfs, err := prometheus.DefaultGatherer.Gather()
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to gather metrics"})
-		}
-		c.Type("text/plain", "version=0.0.4")
-		enc := expfmt.NewEncoder(c.Response().BodyWriter(), expfmt.FmtText)
-		for _, mf := range mfs {
-			if err := enc.Encode(mf); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to encode metrics"})
-			}
-		}
-		return nil
-	})
+	// Prometheus /metrics endpoint — standard Prometheus exposition format.
+	// Uses the well-tested promhttp.Handler() (adapted for Fiber) instead of a
+	// hand-rolled encoder — this ensures a correct Content-Type
+	// ("text/plain; version=0.0.4; charset=utf-8") that Prometheus requires.
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
 
 	// Auth + rate limit middleware
 	authMW := middleware.OptionalAPIKeyAuth(linkStore)
@@ -140,6 +130,16 @@ func main() {
 			return err
 		}
 		return nil
+	})
+
+	// Catch-all 404 — registered after every other route (including
+	// /:shortCode) so that any request that reaches here matches a real,
+	// bounded Fiber route ("/*") instead of Fiber's synthetic not-found
+	// route, whose Path is the raw request URL. Without this, the
+	// Prometheus middleware's `path` label would be unbounded for
+	// probes/scanners hitting arbitrary paths.
+	app.Use(func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusNotFound).SendString("Not Found")
 	})
 
 	// Graceful shutdown
