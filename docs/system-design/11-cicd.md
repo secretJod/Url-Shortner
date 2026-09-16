@@ -2,6 +2,8 @@
 
 ## Status
 
+**Removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM CD stage described below has been removed from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted). CI (test/build, push to `ghcr.io` per `.github/workflows/ci.yml`) remains. What follows is preserved as historical design detail only; the deploy target is undecided again.
+
 **PROPOSED — pending Phase 3 implementation.** This is the single, committed pipeline design for this project — not a menu of alternatives. It has been decided; what remains is building it. See `adr/0007-cicd-pipeline.md` for the decision record, including options that were considered and rejected.
 
 ## Overview

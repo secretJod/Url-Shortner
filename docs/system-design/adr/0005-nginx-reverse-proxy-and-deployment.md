@@ -24,7 +24,9 @@ Adopt, pending approval:
 
 ## Options considered — deployment target
 
-> **SUPERSEDED.** The deployment-target options and decision recorded below (Oracle/Render/Cloud Run) are superseded by the single committed pipeline recorded in `adr/0007-cicd-pipeline.md` (fully local, containerized self-hosted-GitHub-Actions-runner acting as the simulated deploy host — no cloud account, no card). This section is preserved as immutable history of the options originally evaluated; it does not reflect the current plan. The nginx decision above (reverse proxy scope/masking) is unaffected by ADR-0007 and remains as recorded.
+> **Status: removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM deploy pipeline described by `adr/0007-cicd-pipeline.md` (which this section previously said superseded the options below) has been **removed** from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted). Deployment target is once again undecided and left for a future decision. The nginx reverse-proxy decision above (scope/masking) is unaffected.
+>
+> **SUPERSEDED (historical).** The deployment-target options and decision recorded below (Oracle/Render/Cloud Run) are superseded by the (now-removed) pipeline previously recorded in `adr/0007-cicd-pipeline.md`. This section is preserved as immutable history of the options originally evaluated; it does not reflect the current plan.
 
 1. **Fly.io.** Rejected — no longer offers an uncapped always-free tier; requires a card with automatic billing past a small allowance, failing CLAUDE.md §20.
 2. **Render free web service.** No card required; sleeps after 15 min idle causing 30-60s+ cold starts on both redirects and Grafana access. Genuinely free but undermines the "always-on, showcase-quality" goal.

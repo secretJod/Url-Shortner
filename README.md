@@ -65,18 +65,6 @@ and `go build`, so a broken build fails CI). On push to `main` it also logs
 in to `ghcr.io` with the workflow's built-in token and pushes the image,
 tagged with the commit SHA and `latest`.
 
-`.github/workflows/deploy.yml` runs on a self-hosted runner and pulls that
-image, then runs `docker compose up -d` to bring up the full stack.
-
-## Deploying to a "VM"
-
-`deploy/` contains a container that simulates a cloud VM: Docker +
-Docker Compose + a self-hosted GitHub Actions runner registered against
-this repo, all running on your own machine at zero cost. The CD workflow's
-`self-hosted` job executes there, so a push to `main` really does pull the
-freshly built image and redeploy the stack on a host that behaves like a
-real server. See `deploy/README.md` for the exact setup steps.
-
 ## Monitoring
 
 Prometheus scrapes `/metrics` on the API every 15s; `monitoring/prometheus/alerts.yml`

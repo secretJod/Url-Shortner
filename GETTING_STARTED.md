@@ -10,8 +10,8 @@ Three ways to run it:
   Node, Postgres, Redis installed locally.
 - **Option B** — run everything in Docker (recommended, easiest). Needs only
   Docker + Docker Compose.
-- **Option C** — push to GitHub and let CI/CD deploy it onto a simulated VM.
-  Needs a GitHub repo and Docker (for the "VM" runner).
+- **Option C** — push to GitHub and let CI build/test the image and push it
+  to `ghcr.io`. Needs a GitHub repo.
 
 ---
 
@@ -138,9 +138,7 @@ docker compose down -v    # also drop Postgres/Redis data
 
 ---
 
-## Option C — Ship it through GitHub (CI/CD) onto the simulated VM
-
-### 4a. Push to GitHub
+## Option C — Ship it through GitHub CI
 
 ```bash
 git push origin main
@@ -148,51 +146,9 @@ git push origin main
 
 `.github/workflows/ci.yml` runs `go test`, builds the Docker image, and (on
 `main`) pushes it to `ghcr.io` tagged with the commit SHA and `latest`.
-
-### 4b. Start the "VM"
-
-The "VM" is a container running Docker + a self-hosted GitHub Actions
-runner registered against this repo — it plays the role of a cloud host.
-
-1. Get a runner registration token: repo → **Settings → Actions → Runners →
-   New self-hosted runner**.
-2. Build the runner image:
-
-   ```bash
-   docker build -t urlshortener-vm-runner ./deploy/runner
-   ```
-
-3. Run it (mounts the host Docker socket so it can run `docker compose`):
-
-   ```bash
-   docker run -d \
-     --name urlshortener-vm \
-     -e REPO_URL="https://github.com/<owner>/<repo>" \
-     -e RUNNER_TOKEN="<token from step 1>" \
-     -v /var/run/docker.sock:/var/run/docker.sock \
-     urlshortener-vm-runner
-   ```
-
-See `deploy/README.md` for token rotation and troubleshooting.
-
-### 4c. Deploy
-
-Push to `main` (or run the `Deploy` workflow manually via
-`workflow_dispatch`). `.github/workflows/deploy.yml`'s self-hosted job lands
-on the VM container, pulls the freshly built image, and runs
-`docker compose up -d --build`.
-
-### 4d. See it running on the VM
-
-```bash
-docker exec urlshortener-vm docker compose ps
-```
-
-**Caveat:** the runner talks to the host's Docker daemon through the
-mounted socket, so compose bind-mounts resolve against the host filesystem,
-not the runner container. The fully-reliable local path is plain
-`docker compose up` (Option B); the GitHub → VM path in this option is the
-CI/CD wiring artifact, useful for exercising the pipeline itself.
+There is currently no deployment step beyond that — actually running the
+built image somewhere is undecided (see `docs/system-design/06-deployment.md`).
+To run it yourself right now, use Option B locally.
 
 ---
 

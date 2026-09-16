@@ -10,6 +10,8 @@
 
 ## PROPOSED PRODUCTION STATE — Committed deployment & CI/CD plan
 
+> **Status: removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM deploy plan described in this section (and in `11-cicd.md`/`adr/0007-cicd-pipeline.md`) has been removed from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted). CI (test/build, push to `ghcr.io`) remains in `.github/workflows/ci.yml`. Deployment target is undecided again and left for a future decision. The rest of this section is preserved as historical design detail.
+
 **The deployment approach has been decided.** The full CI/CD pipeline and deploy target are documented in **`11-cicd.md`**, with the decision record (including the cloud-provider options that were evaluated and rejected) in **`adr/0007-cicd-pipeline.md`**. This section intentionally no longer presents a multi-provider menu — see `11-cicd.md` for the single, concrete design: GitHub Actions CI (`go test` → `docker build` → push to `ghcr.io`) followed by a CD stage that deploys onto a containerized, self-hosted-Actions-runner "simulated VM" running the full `docker compose` stack (`api + postgres + redis + prometheus + grafana + nginx`) on the user's own machine, at $0, with no card and no cloud account.
 
 That plan replaces the previously-open "where do we host this" evaluation for the *deploy target*. It does not change the frontend-hosting-agnostic note below, since the committed plan serves the built SPA from the same containerized stack (via the API/nginx) rather than a separate static host.

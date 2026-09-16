@@ -2,6 +2,8 @@
 
 ## Status
 
+**Removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM deploy pipeline this ADR described has been removed from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted; CI build/test/push to `ghcr.io` in `.github/workflows/ci.yml` remains). Deployment target is undecided again and left for a future decision. The rest of this ADR is preserved as historical record of the rejected/adopted options at the time.
+
 Proposed — pending Phase 3 implementation per CLAUDE.md §31/§33. Nothing in this ADR has been implemented; no `.github/workflows/` file, registry image, or runner container exists yet. This ADR supersedes the "deployment target" decision recorded in `adr/0005-nginx-reverse-proxy-and-deployment.md` (see that ADR's cross-reference note) for the purpose of *how the project is deployed*; ADR-0005's nginx-scope decision is unaffected.
 
 ## Problem
