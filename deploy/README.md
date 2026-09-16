@@ -63,3 +63,38 @@ Grafana/Prometheus/nginx are then reachable the same way as any local
 Registration tokens expire quickly. If the container restarts and fails to
 register, generate a new token and re-run step 3 (or re-`docker exec` a
 fresh `config.sh` call with the new token).
+
+## Required GitHub Secrets (production deploy)
+
+`deploy.yml` no longer copies `.env.example` to `.env` on the deploy target.
+`.env.example` contains publicly-known placeholder values (they're in the
+git history), so shipping them to production would mean running with
+world-readable passwords, a reversible analytics IP hash, and links pointing
+at `localhost`. Instead, the workflow generates `.env` at deploy time from
+GitHub Actions Secrets, and the deploy fails loudly if any required secret
+is missing.
+
+The backend also enforces this at startup: when `ENV=production`, it refuses
+to start (fatal error, non-zero exit) if any of these values are empty or
+still equal a known dev placeholder (see `backend/internal/config/config.go`).
+This is the safety net if the workflow is ever changed to skip a secret.
+
+Set these in **repo → Settings → Secrets and variables → Actions → New
+repository secret**:
+
+| Secret | Purpose | How to generate |
+| --- | --- | --- |
+| `DATABASE_URL` | Full Postgres connection string used by the API in production (`postgresql://user:pass@host:5432/db?schema=public`). Must not reuse the dev user/password. | Build from your production Postgres credentials; generate the password with `openssl rand -base64 32`. |
+| `REDIS_PASSWORD` | Password for the production Redis instance (session/cache store). | `openssl rand -base64 32` |
+| `IP_HASH_SECRET` | HMAC secret used to hash visitor IPs before storing them for analytics. A known/placeholder value makes the hash reversible (a privacy problem), so this must be a strong, private secret. | `openssl rand -hex 32` |
+| `GF_SECURITY_ADMIN_PASSWORD` | Grafana admin login password. | `openssl rand -base64 24` |
+| `SMTP_HOST` | Hostname of the real production SMTP provider (never MailHog in production). | Provided by your email provider (e.g. SES, Postmark, SendGrid). |
+| `SMTP_PORT` | Port for the production SMTP provider. | Provided by your email provider. |
+| `SMTP_USER` | Username/API key for SMTP auth (if required by your provider). | Provided by your email provider. |
+| `SMTP_PASSWORD` | Password/API secret for SMTP auth (if required by your provider). | Provided by your email provider. |
+| `MAIL_FROM` | "From" address used for verification/notification email. | Your chosen sender address, e.g. `no-reply@yourdomain.com`. |
+| `BASE_URL` | Public base URL of the deployed app, used to build short links. Must not be `localhost`. | Your production domain, e.g. `https://short.yourdomain.com`. |
+| `CORS_ALLOWED_ORIGINS` (optional) | Comma-separated list of allowed frontend origins in production. | Your production frontend origin(s). |
+
+None of these values are invented or stored in this repo — they must be
+created by a maintainer with real production credentials.

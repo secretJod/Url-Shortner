@@ -119,18 +119,13 @@ func main() {
 	// Redirect route for short codes — fallback to SPA index.html if not a valid short code.
 	// SEC-06: rate-limited per-IP (anonymous, since redirects carry no API key)
 	// to blunt scraping/enumeration of short codes.
+	// NOTE: RedirectHandler.Redirect handles the not-found case internally
+	// (it writes a JSON 404 and returns nil), and the frontend has no
+	// dedicated "not found" route/page to serve instead — so there is no
+	// SPA page worth falling back to here. We just return the handler's
+	// result (redirect on success, JSON 404/500 on failure) as-is.
 	redirect := handlers.NewRedirectHandler(linkStore, rdb, cfg.IPHashSecret)
-	app.Get("/:shortCode", rateLimitMW, func(c *fiber.Ctx) error {
-		err := redirect.Redirect(c)
-		if err != nil {
-			// Not a valid short code — serve the SPA index.html
-			if c.Response().StatusCode() == fiber.StatusNotFound {
-				return c.SendFile("./frontend/dist/index.html")
-			}
-			return err
-		}
-		return nil
-	})
+	app.Get("/:shortCode", rateLimitMW, redirect.Redirect)
 
 	// Catch-all 404 — registered after every other route (including
 	// /:shortCode) so that any request that reaches here matches a real,

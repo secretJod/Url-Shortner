@@ -15,17 +15,56 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Provide environment file
-        run: cp .env.example .env
+      - name: Generate production environment file from secrets
+        run: |
+          set -euo pipefail
+
+          required_secret() {
+            name="$1"
+            value="$2"
+            if [ -z "$value" ]; then
+              echo "::error::Missing required GitHub secret: $name. Set it in repo Settings > Secrets and variables > Actions before deploying. See deploy/README.md." >&2
+              exit 1
+            fi
+          }
+
+          required_secret "POSTGRES_PASSWORD" "${{ secrets.POSTGRES_PASSWORD }}"
+          required_secret "DATABASE_URL" "${{ secrets.DATABASE_URL }}"
+          required_secret "REDIS_PASSWORD" "${{ secrets.REDIS_PASSWORD }}"
+          required_secret "IP_HASH_SECRET" "${{ secrets.IP_HASH_SECRET }}"
+          required_secret "GF_SECURITY_ADMIN_PASSWORD" "${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}"
+          required_secret "SMTP_HOST" "${{ secrets.SMTP_HOST }}"
+          required_secret "SMTP_PORT" "${{ secrets.SMTP_PORT }}"
+          required_secret "MAIL_FROM" "${{ secrets.MAIL_FROM }}"
+          required_secret "BASE_URL" "${{ secrets.BASE_URL }}"
+
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
+          DATABASE_URL="${{ secrets.DATABASE_URL }}"
+          REDIS_ADDR="redis:6379"
+          REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}"
+          REDIS_DB=0
+          PORT=8080
+          BASE_URL="${{ secrets.BASE_URL }}"
+          ENV="production"
+          CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS }}"
+          IP_HASH_SECRET="${{ secrets.IP_HASH_SECRET }}"
+          SMTP_HOST="${{ secrets.SMTP_HOST }}"
+          SMTP_PORT="${{ secrets.SMTP_PORT }}"
+          SMTP_USER="${{ secrets.SMTP_USER }}"
+          SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
+          MAIL_FROM="${{ secrets.MAIL_FROM }}"
+          GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}"
+          EOF
 
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull latest images
-        run: docker compose pull --ignore-pull-failures
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml pull --ignore-pull-failures
 
       - name: Deploy stack
-        run: docker compose up -d --build
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
       - name: Show running services
-        run: docker compose ps
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
