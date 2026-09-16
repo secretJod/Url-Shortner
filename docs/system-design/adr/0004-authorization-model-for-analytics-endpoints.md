@@ -1,7 +1,7 @@
 # ADR-0004: Authorization model for per-link analytics endpoints
 
 ## Status
-Proposed — pending Phase 2 approval.
+✅ **Accepted and implemented — as Option 1, not the Option 2 recommended below.** Both `GET /api/stats/:shortCode` and `GET /api/links/:shortCode/clicks` now require the caller to own the link (`stats.go`'s `ownsLink` check, 404 for non-owners) — full ownership gating, not the "keep aggregates public, strip only identifying fields" middle ground this ADR recommended. `GET /api/stats/top` remains public and aggregate-only, unaffected. See `05-security.md` SEC-02a/SEC-02b (resolved) and `04-api-design.md`.
 
 ## Problem
 `GET /api/stats/:shortCode` and `GET /api/links/:shortCode/clicks` are currently public and unauthenticated (SEC-02a/SEC-02b in `05-security.md`), while `GET /api/links` correctly requires ownership. It is unclear from the code whether public per-link stats were an intentional product decision (a "public leaderboard"-style feature, consistent with `GET /api/stats/top` which does appear intentionally public) or an oversight, since no comment or test documents the intent either way.

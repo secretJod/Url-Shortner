@@ -1,32 +1,38 @@
 # 02 — High-Level Design
 
+Status markers used below follow `01-project-overview.md`'s vocabulary (✅ Implemented / 🔜 Proposed / ⛔ Removed / 🐞 Known issue / ❓ Unknown).
+
 ## CURRENT STATE — System Context
 
 ```mermaid
 flowchart LR
-    Browser["Browser (React SPA)"] -->|HTTP :8080| API["Go/Fiber API\n(also serves SPA static files)"]
+    Browser["Browser (React SPA)"] -->|HTTP :80| Nginx["nginx\n(reverse proxy, security headers)"]
+    Nginx -->|proxy_pass :8080| API["Go/Fiber API\n(also serves SPA static files)"]
     API -->|Prisma-Go| PG[("PostgreSQL 16")]
-    API -->|go-redis v9| Redis[("Redis 7\ncache + counter + rate limit + stream")]
-    API -->|goroutine, in-process| Worker["Analytics Worker\n(consumer group)"]
+    API -->|go-redis v9| Redis[("Redis 7 (requirepass)\ncache + counter + rate limit + stream")]
+    API -->|SMTP| Mail["MailHog\n(local email sink)"]
+    API -->|goroutine, in-process| Worker["Analytics Worker\n(consumer group, panic-recovering)"]
     Worker -->|Prisma-Go writes| PG
     Worker -->|XREADGROUP/XACK| Redis
     Prometheus["Prometheus"] -->|scrape /metrics| API
-    Grafana["Grafana"] -->|query| Prometheus
+    Grafana["Grafana"] -->|query, provisioned dashboards| Prometheus
 ```
 
-All 5 runtime components (postgres, redis, api, prometheus, grafana) run as sibling containers in one `docker-compose.yml`, communicating over the default Compose network by service name (`postgres`, `redis`, `api`). No reverse proxy, no TLS termination, no separate frontend server in the containerized deployment — Vite's dev server on `:5173` is used only for local frontend development.
+All services (postgres, redis, mailhog, a one-shot `migrate` job, api, nginx, prometheus, grafana) run as sibling containers in one `docker-compose.yml`, communicating over the default Compose network by service name. nginx is the single public entrypoint (`:80`), terminating in front of the API and adding security headers (see `05-security.md` SEC-07, resolved). Vite's dev server on `:5173` is used only for local frontend development outside Docker.
 
 ## CURRENT STATE — Components & Responsibilities
 
 | Component                                                   | Responsibility                                                                                           | Notes                                                                                                         |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| nginx                                                        | Reverse proxy, TLS-ready termination point (no TLS configured yet — see `06-deployment.md`), security headers, gzip | Single public entrypoint on `:80`; proxies to `api:8080` |
 | Fiber HTTP server (`cmd/api/main.go`)                       | Route registration, middleware chain, static file + SPA serving                                          | Single process, single binary                                                                                 |
 | `internal/handlers`                                         | Request parsing/validation, orchestration                                                                | Thin — delegates to store/redis                                                                               |
-| `internal/middleware`                                       | CORS, recover, access log, 2x metrics middleware, optional API-key auth, rate limit                      | Order matters: auth must run before rate-limit (rate limiter reads `c.Locals`)                                |
-| `internal/store` (interfaces) + `internal/db` (Prisma impl) | Persistence abstraction over Postgres                                                                    | Clean interface segregation (LinkStore/UserStore/ApiKeyStore/ClickEventStore/StatsStore) — a genuine strength |
-| `internal/redis`                                            | Cache-aside cache, atomic ID counter, alias reservation, sliding-window rate limiter, click-event stream | All cross-cutting infra concerns are centralized here                                                         |
-| `internal/worker`                                           | Single goroutine, single named consumer (`worker-1`), drains stream into Postgres                        | Not horizontally scaled today (see Reliability doc)                                                           |
-| React SPA                                                   | Login (mint/import API key), Dashboard (create/list/"delete" links), Stats, Top Links, Admin (metrics)   | All auth state lives in `localStorage`, no refresh/rotation                                                   |
+| `internal/mail`                                              | SMTP-based email sending for magic-link verification                                                      | Backed by MailHog locally; real SMTP creds would be needed for a real deployment                              |
+| `internal/middleware`                                        | CORS (env-driven), recover, access log, 2x metrics middleware, optional/required API-key auth, rate limit | Order matters: auth must run before rate-limit (rate limiter reads `c.Locals`)                                |
+| `internal/store` (interfaces) + `internal/db` (Prisma impl) | Persistence abstraction over Postgres                                                                    | Clean interface segregation (LinkStore/UserStore/ApiKeyStore/ClickEventStore/StatsStore/VerificationTokenStore) — a genuine strength |
+| `internal/redis`                                             | Cache-aside cache, atomic ID counter, alias reservation, sliding-window rate limiter, click-event stream, salted IP hashing | All cross-cutting infra concerns are centralized here                                                         |
+| `internal/worker`                                             | Single goroutine, single named consumer (`worker-1`), panic-recovering, drains stream into Postgres        | Not yet horizontally scaled (see `08-reliability.md`, ADR-0003)                                               |
+| React SPA                                                    | Login (mint API key via email verification), Dashboard (create/list/delete links), Stats, Top Links, Admin (metrics) | Auth state lives in `localStorage`, no refresh/rotation                                                        |
 
 ## CURRENT STATE — Trust Boundaries
 
@@ -35,21 +41,25 @@ flowchart TB
     subgraph Untrusted["Untrusted (Internet)"]
         U[Any client]
     end
-    subgraph Edge["Edge (no boundary enforcement today)"]
-        API["Fiber API :8080\nNo TLS, no WAF, no reverse proxy"]
+    subgraph Edge["Edge"]
+        Nginx["nginx :80\nsecurity headers, no TLS configured yet"]
+        API["Fiber API :8080\nenv-driven CORS"]
     end
     subgraph Internal["Internal Docker network"]
         PG[(Postgres)]
-        R[(Redis - no AUTH password)]
+        R[(Redis - requirepass)]
         Worker
+        Mail[(MailHog)]
     end
-    U -->|"unauthenticated POST /api/keys\nmints identity for ANY email"| API
-    U -->|"unauthenticated GET /api/stats/*\nreads any link's analytics"| API
+    U -->|"POST /api/keys\nrequires clicking emailed link before a key is issued"| Nginx
+    U -->|"GET /api/stats/:shortCode, /api/links/:shortCode/clicks\nrequire ownership (404 for non-owners)"| Nginx
+    Nginx --> API
     API --> PG
     API --> R
+    API --> Mail
 ```
 
-**Key trust-boundary weakness (current state):** the only "authentication" primitive (`POST /api/keys`) requires no proof of email ownership, so the boundary between "anonymous internet user" and "authenticated user X" is not actually enforceable — see `05-security.md` Finding SEC-01.
+The identity-minting and per-link-analytics gaps flagged in the original audit are resolved (see `05-security.md` SEC-01/SEC-02a/SEC-02b). Remaining edge gaps: no TLS is configured anywhere yet (deployment-dependent, see `06-deployment.md`), and `/metrics`/`/health` are still unauthenticated (acceptable for a private scrape target, a real exposure if the port is published — see `05-security.md` SEC-07).
 
 ## CURRENT STATE — Request Flows
 
@@ -61,11 +71,11 @@ sequenceDiagram
     participant API as Fiber
     participant R as Redis
     participant PG as Postgres
-    C->>API: GET /:shortCode
+    C->>API: GET /:shortCode (rate-limited)
     API->>R: GET urlshortener:link:<code>
     alt cache hit
         R-->>API: {url, id}
-        API->>R: XADD click_events (fire-and-forget)
+        API->>R: XADD click_events (fire-and-forget, salted IP hash)
         API-->>C: 302 Redirect
     else cache miss
         API->>PG: SELECT link WHERE short_code=?
@@ -101,26 +111,34 @@ sequenceDiagram
     API-->>C: 201 {short_url, short_code, long_url}
 ```
 
-### "Auth" flow (current — not real authentication)
+### Email-verified auth flow (✅ Implemented — replaces the original "no real auth" flow)
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant API as Fiber
     participant PG as Postgres
+    participant Mail as MailHog/SMTP
     C->>API: POST /api/keys {email}
     API->>API: validate email is well-formed (net/mail)
-    API->>PG: SELECT user WHERE email=? (or CREATE if none)
+    API->>PG: GetOrCreateUserByEmail (atomic upsert)
+    API->>PG: INSERT verification_token (hashed, 15min TTL)
+    API->>Mail: send magic link
+    API-->>C: 202 {message: "verification email sent"}
+    Note over C,Mail: No API key is issued yet.
+    C->>API: GET /api/keys/verify?token=...
+    API->>PG: look up + consume token, mark user verified
     API->>PG: INSERT api_key (hash only)
     API-->>C: 201 {api_key: "usk_...", warning}
-    Note over C,API: No proof email belongs to caller.<br/>Any email, including someone else's, works.
 ```
+
+This closes the original SEC-01 finding: an API key is only issued after the caller proves control of the mailbox by following the emailed link.
 
 ### Failure flows (current state, as implemented)
 
-- **Redis down:** `RateLimit` fails open (`middleware/ratelimit.go:53-56`) — requests proceed unlimited. `GetLongURL` cache miss path falls through to Postgres, so redirects still work but at full DB load. `NextID`/`ReserveAlias` for shortening will hard-fail (`resolveShortCode` returns an error), so **all URL creation stops** if Redis is unreachable — single point of failure.
-- **Postgres down:** Redirects served from cache continue to work; cache misses 500. Shortening always fails (writes go to Postgres synchronously). Health check (`/health`) does **not** check Postgres at all, so an orchestrator/load balancer using `/health` would see the instance as healthy while writes are completely broken.
-- **Analytics worker crashes:** Click events accumulate in the Redis Stream (capped at `MAXLEN ~100000`, `stream.go:54`) until a new process with the same consumer name reconnects; if the API process itself restarts, the worker restarts with it (it's a goroutine of the same binary, not a separate service) — no independent scaling or restart of the worker.
+- **Redis down:** `RateLimit` fails open (`middleware/ratelimit.go`) — requests proceed unlimited. `GetLongURL` cache miss path falls through to Postgres, so redirects still work but at full DB load. `NextID`/`ReserveAlias` for shortening will hard-fail (`resolveShortCode` returns an error), so **all URL creation stops** if Redis is unreachable — single point of failure, unchanged from the original audit (see `08-reliability.md`).
+- **Postgres down:** Redirects served from cache continue to work; cache misses 500. Shortening always fails (writes go to Postgres synchronously). `/health` now checks **both** Redis and Postgres (✅ Implemented, closes the original gap — see `08-reliability.md`), so an orchestrator using `/health` will correctly see the instance as degraded.
+- **Analytics worker crashes:** Click events accumulate in the Redis Stream (capped at `MAXLEN ~100000`, `stream.go`) until the worker reconnects. The worker's `run()` loop now wraps itself in `recover()` (✅ Implemented) so a panic in click-event processing restarts the loop instead of crashing the whole API process. It still runs as a goroutine of the API binary rather than an independently deployable/scalable process (🔜 Proposed, see ADR-0003).
 
 ## PROPOSED PRODUCTION STATE — System Context
 
@@ -137,81 +155,54 @@ flowchart LR
     Worker1 --> RedisMgd
 ```
 
-Key differences from current state, each justified below and elaborated in the numbered docs:
+Remaining gaps from the current state, each tracked in its own doc:
 
-1. **Decouple the analytics worker from the API process** — today it's a goroutine tied to API lifecycle; production should let it scale/restart independently (justified by reliability: a worker crash loop must not be able to affect redirect latency, and by scalability: click volume and redirect volume scale differently).
-2. **Introduce a reverse proxy / edge layer for TLS + security headers** — the current server is plain HTTP with hardcoded localhost CORS; this is a hard blocker for any real deployment (see `06-deployment.md`).
-3. **Real authentication** (email verification, e.g. magic link) before password-based or higher-privilege actions are trusted — current identity-minting endpoint is a critical security gap (see `05-security.md` SEC-01).
-4. **Bounded, indexed analytics queries** replacing full-table scans — required at even moderate scale (see `07-scalability.md`).
-5. **Postgres included in health checks**, with separate liveness/readiness semantics — required for correct autoscaling/orchestration behavior (see `08-reliability.md`).
+1. **Decouple the analytics worker from the API process** (🔜 Proposed) — today it's a goroutine tied to API lifecycle (panic-recovering, but still coupled); production should let it scale/restart independently (see `08-reliability.md`, ADR-0003).
+2. **TLS termination** (🔜 Proposed) — nginx is now in front of the API and adds security headers (✅ Implemented), but no TLS certificate/HTTPS config exists yet; this is deployment-target-dependent (see `06-deployment.md`).
+3. **Bounded, indexed analytics queries for `GetTopLinks`/`GetLinkStats`** (🐞 Known issue, fix proposed) replacing the remaining full-table scans — `GetRecentClickEvents` was already fixed this way (see `03-data-model.md`, `07-scalability.md`, ADR-0001).
+4. **Horizontal scaling / a real deployment target** (🔜 Proposed / currently undecided) — see `06-deployment.md`.
 
-No component is added merely for appearance; each is tied to a concrete, cited problem in another doc, per CLAUDE.md §3.
+No component is added merely for appearance; each is tied to a concrete, cited problem in another doc.
 
-## PROPOSED PRODUCTION STATE — nginx reverse proxy (with optional URL masking/cloaking)
+## nginx reverse proxy — status
 
-**Status: PROPOSED design option only — not approved, not implemented (CLAUDE.md §31). Requires explicit user approval before any nginx config or code is written.**
+**✅ Implemented (proxy/headers scope).** nginx now sits in front of the API (`nginx/nginx.conf`, wired into `docker-compose.yml`), providing security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, a `Content-Security-Policy`), gzip, and a single public entrypoint on `:80`. TLS termination is not yet configured (deployment-target-dependent).
 
-### Why nginx at all
+### The masking/cloaking option — not adopted, documented for completeness
 
-Independent of masking, `06-deployment.md` already flags plain-HTTP Fiber-on-:8080 with hardcoded-localhost CORS as a hard deployment blocker. Placing nginx (or any reverse proxy) in front of the API cleanly solves, in one place:
+Earlier design discussion considered whether nginx should also provide URL masking/cloaking (keeping the short URL visible in the browser address bar while serving the destination's content underneath). **This was not adopted** — the shipped `nginx.conf` retains the standard 302-redirect semantics, with the masking config commented out and explicitly documented as disabled by default (see the "OPTIONAL / DISABLED BY DEFAULT" block in `nginx/nginx.conf`). The mechanism and trade-offs are preserved below for reference, in case this is revisited.
 
-- TLS termination (currently none — CURRENT STATE has no TLS anywhere)
-- Security headers (HSTS, `X-Content-Type-Options`, etc. — see `05-security.md`)
-- Env-driven routing/CORS origin handling instead of hardcoded values baked into the Go binary
+**Current, shipped behavior (`backend/internal/handlers/redirect.go`):** `GET /:shortCode` returns an HTTP **302 Found** with a `Location:` header pointing at the long URL. A 302 is a browser-level instruction: "go fetch this other URL instead." The browser navigates there and **replaces the address bar with the long URL.** No amount of nginx configuration changes this — masking is fundamentally incompatible with an HTTP redirect, because the redirect *is* the browser being told to change its own address bar.
 
-This part is low-risk and orthogonal to masking — it does not change redirect semantics for the default case.
-
-### The masking/cloaking requirement — mechanism, honestly stated
-
-The requested behavior is: when a user visits a short URL, the **short URL stays in the browser address bar** while the real long-URL content is what's actually shown. This is **not achievable with the current mechanism.**
-
-**Current behavior (confirmed in code — `backend/internal/handlers/redirect.go`):** `GET /:shortCode` returns an HTTP **302 Found** with a `Location:` header pointing at the long URL. A 302 is a browser-level instruction: "go fetch this other URL instead." The browser navigates there and **replaces the address bar with the long URL.** No amount of nginx configuration changes this — masking is fundamentally incompatible with an HTTP redirect, because the redirect *is* the browser being told to change its own address bar.
-
-To keep the short URL visible, the response at `/:shortCode` must instead **be** the destination's content, not a pointer to it. Two conceptual approaches:
+To keep the short URL visible, the response at `/:shortCode` would instead need to **be** the destination's content, not a pointer to it. Two conceptual approaches were evaluated and rejected (kept here as design history):
 
 **Approach A — nginx reverse-proxying the destination content (`proxy_pass`).**
-nginx (or the API, with nginx handling header rewriting) makes a server-side request to the long URL and streams its response body back to the browser as if it were the short-URL page's own content. Conceptually this needs:
-- `proxy_pass` to the resolved destination for that path
-- `proxy_set_header`/response header stripping, since destination sites frequently set `X-Frame-Options` / `Content-Security-Policy` (which don't apply here since there's no iframe, but the destination may also set `Content-Security-Policy: frame-ancestors` or caching/cookie headers that assume they own the origin)
-- `sub_filter` to rewrite the destination page's relative links/asset paths (`/css/app.css`, absolute-path links, etc.) so they still resolve correctly when served from the short-domain origin instead of the destination's own origin — without this, most non-trivial sites will render broken (missing CSS/JS, broken internal links)
-- This is **not a static nginx.conf directive list you can just drop in** — real destinations vary wildly in how "proxyable" they are (some use protocol-relative URLs, JS-injected asset paths, service workers tied to their own origin, etc.), so this degrades to "works for simple pages, breaks unpredictably for complex ones."
+nginx makes a server-side request to the long URL and streams its response body back to the browser as if it were the short-URL page's own content. This needs `proxy_pass` to the resolved destination, response-header stripping (destinations often set `X-Frame-Options`/CSP `frame-ancestors` or caching/cookie headers that assume they own the origin), and `sub_filter` to rewrite the destination's relative asset/link paths — real destinations vary wildly in how "proxyable" they are, so this degrades to "works for simple pages, breaks unpredictably for complex ones."
 
 **Approach B — full-page iframe wrapper served at the short-URL path.**
-`/:shortCode` returns a tiny HTML page (served by the API or nginx directly) containing a full-viewport `<iframe src="{longURL}">`. The address bar shows the short URL because the top-level document never navigates; the iframe navigates internally.
-- Much simpler to implement than Approach A.
-- **Breaks entirely** for any destination that sends `X-Frame-Options: DENY`/`SAMEORIGIN` or a CSP `frame-ancestors` directive (a large fraction of real sites, including most major platforms) — the browser will refuse to render the iframe content, showing a blank frame or browser error, with no clean nginx-side workaround (stripping those headers requires nginx to intercept the *destination's* response, i.e. Approach A's proxying again, at which point you're doing both).
+`/:shortCode` returns a tiny HTML page containing a full-viewport `<iframe src="{longURL}">`. Simpler than Approach A, but **breaks entirely** for any destination sending `X-Frame-Options`/CSP `frame-ancestors` (a large share of real sites) — no clean nginx-side workaround without also proxying (converging back to Approach A).
 
-### Trade-offs and caveats — read before approving
+**Why this was rejected as the default:**
 
-This is a **deliberate product trade-off, not a free technical win**:
+1. **Broken destinations are common and undetectable in advance** for both approaches.
+2. **Security/legal exposure** — proxying or iframing third-party content the operator doesn't own raises consent/copyright/liability questions, materially different from "redirect to their URL."
+3. **Phishing/cloaking classification risk** — "URL A displays content from URL B while masking B" is a recognized phishing signature; a legitimate masking shortener risks blocklisting/reputation damage.
+4. **Bandwidth/cost** — Approach A means every redirect's response bytes flow through this server rather than a ~few-hundred-byte 302, relevant given the ₹0/$0 constraint and free-tier bandwidth caps.
+5. **SEO/analytics harm** — masking breaks canonicalization and destination-side referrer analytics.
+6. **No partial version exists** — it's redirect (current, robust, universally compatible) or proxy/iframe (fragile, higher-risk).
 
-1. **Broken destinations are common and undetectable in advance.** Any destination with frame-busting headers (Approach B) or non-relative/JS-driven asset loading (Approach A) will render broken or blank, with no generic fix — you'd need per-destination special-casing.
-2. **Security/legal exposure.** Proxying or iframing third-party content the operator doesn't own raises questions of consent, copyright, and liability for what's displayed under the operator's domain. This is materially different from "redirect to their URL" (which is what URL shorteners have always legally been understood to do).
-3. **Phishing/cloaking classification risk.** Browsers, Safe Browsing lists, and corporate URL scanners specifically look for "URL A displays content from URL B while masking B" as a phishing/cloaking signature — this is the same technique used maliciously to disguise destinations. A legitimate masking shortener risks being flagged, blocklisted, or having its domain reputation damaged.
-4. **Bandwidth/cost.** Approach A means every redirect's response bytes flow through this server rather than a 302 (a few hundred bytes). At scale this is materially more bandwidth (relevant given the ₹0/$0 constraint and free-tier bandwidth caps in `06-deployment.md`).
-5. **SEO and analytics harm.** Search engines and analytics tools generally expect a redirect chain to resolve to the canonical destination URL; masking breaks canonicalization, referrer semantics, and destination-side analytics (the destination sees traffic originating from the proxy/iframe, not organic referral data).
-6. **No partial version exists.** There's no configuration that masks "a little" — it's redirect (current, robust, universally compatible) or proxy/iframe (fragile, higher-risk, opt-in per the trade-offs above).
-
-### Flow comparison
+### Flow comparison (current, shipped behavior)
 
 ```mermaid
 flowchart TB
-    subgraph Current["CURRENT STATE — 302 redirect (no masking)"]
+    subgraph Current["Shipped — 302 redirect via nginx passthrough (no masking)"]
         direction LR
-        B1[Browser] -->|GET /:code| F1["Fiber :8080"]
-        F1 -->|302 Location: longURL| B1
+        B1[Browser] -->|GET /:code| N1["nginx"]
+        N1 -->|proxy_pass| F1["Fiber :8080"]
+        F1 -->|302 Location: longURL| N1
+        N1 --> B1
         B1 -->|navigates, address bar\nNOW SHOWS long URL| D1[Destination]
-    end
-
-    subgraph Proposed["PROPOSED — masking via nginx (Approach A: proxy) or (Approach B: iframe)"]
-        direction LR
-        B2[Browser] -->|GET /:code\naddress bar shows SHORT URL| N["nginx"]
-        N -->|A: proxy_pass + sub_filter\nOR\nB: serve iframe HTML shell| D2[Destination]
-        D2 -->|response body/content| N
-        N -->|content served under short-URL origin\naddress bar UNCHANGED| B2
     end
 ```
 
-### Decision status
-
-Not decided. This section documents the mechanism and its honest trade-offs so the user can approve or reject with full information, per CLAUDE.md §31. See `adr/0005-nginx-reverse-proxy-and-deployment.md` for the recorded decision options.
+See `adr/0005-nginx-reverse-proxy-and-deployment.md` for the recorded decision.

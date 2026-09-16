@@ -2,9 +2,7 @@
 
 ## Status
 
-**Removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM deploy pipeline this ADR described has been removed from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted; CI build/test/push to `ghcr.io` in `.github/workflows/ci.yml` remains). Deployment target is undecided again and left for a future decision. The rest of this ADR is preserved as historical record of the rejected/adopted options at the time.
-
-Proposed — pending Phase 3 implementation per CLAUDE.md §31/§33. Nothing in this ADR has been implemented; no `.github/workflows/` file, registry image, or runner container exists yet. This ADR supersedes the "deployment target" decision recorded in `adr/0005-nginx-reverse-proxy-and-deployment.md` (see that ADR's cross-reference note) for the purpose of *how the project is deployed*; ADR-0005's nginx-scope decision is unaffected.
+**Accepted, implemented, then reverted.** The self-hosted-runner/simulated-VM CD pipeline this ADR describes was built (`deploy/` directory, `.github/workflows/deploy.yml`) and later deliberately removed from the repository. What remains today from this ADR's decision is only the **CI** half — test/build/push to `ghcr.io`, in `.github/workflows/ci.yml`. Deployment target is undecided again, left for a future decision (see `06-deployment.md`). This ADR supersedes `adr/0005-nginx-reverse-proxy-and-deployment.md`'s deployment-target section for the purpose of *how the project was deployed while this design was active*; ADR-0005's nginx-scope decision is separate and unaffected by any of this. The rest of this document is preserved as the historical decision record.
 
 ## Problem
 
@@ -12,9 +10,9 @@ Proposed — pending Phase 3 implementation per CLAUDE.md §31/§33. Nothing in 
 
 ## Options considered
 
-1. **Oracle Cloud Always-Free VM** (previously documented as the primary target in ADR-0005). **Rejected.** Requires a card on file at account signup, which conflicts with CLAUDE.md §20's disqualification of card-required services, even though the compute itself doesn't auto-bill. The user has decided not to accept this trade-off.
+1. **Oracle Cloud Always-Free VM** (previously documented as the primary target in ADR-0005). **Rejected.** Requires a card on file at account signup, which conflicts with the project's disqualification of card-required services, even though the compute itself doesn't auto-bill. The user has decided not to accept this trade-off.
 2. **Render free web service** (previously documented as the no-card fallback in ADR-0005). **Rejected.** No card required, but the free tier sleeps after 15 minutes idle, producing 30-60s+ cold starts on both redirects and the Grafana dashboard — undermines the "always demonstrable" showcase goal, and depends on an external provider's continued free-tier policy.
-3. **Google Cloud Run** (previously documented as a conditional alternative in ADR-0005). **Rejected.** Requires a billing account/card at signup regardless of whether usage stays within the free allowance, which is the exact "requires payment method, bills automatically past a limit" pattern CLAUDE.md §20 disqualifies.
+3. **Google Cloud Run** (previously documented as a conditional alternative in ADR-0005). **Rejected.** Requires a billing account/card at signup regardless of whether usage stays within the free allowance, which is the exact "requires payment method, bills automatically past a limit" pattern the zero-cost constraint disqualifies.
 4. **Fully local, containerized self-hosted-runner pipeline** (this ADR). **Adopted.** No cloud account, no card, anywhere. Uses only: (a) GitHub Actions' free CI runners and free `ghcr.io` registry (both tied to the user's existing free GitHub account, no card), and (b) a container the user runs on their own machine, standing in for a cloud VM, registered as a GitHub Actions self-hosted runner. All compute for the "deploy target" is the user's own hardware — there is no external biller to trigger, ever.
 
 ## Decision
@@ -29,10 +27,10 @@ Adopt, as the single committed pipeline (see `11-cicd.md` for the full design):
 
 ## Reasoning
 
-- **Strict CLAUDE.md §20/§21 compliance.** Every previously-evaluated cloud option carried either a hard card requirement (Oracle, Cloud Run) or a functional trade-off that undermines the showcase goal (Render's cold starts). Running the "VM" as a container the user owns removes the external-provider dependency entirely — there is no biller in the loop, so there is nothing to disqualify.
+- **Strict zero-cost compliance.** Every previously-evaluated cloud option carried either a hard card requirement (Oracle, Cloud Run) or a functional trade-off that undermines the showcase goal (Render's cold starts). Running the "VM" as a container the user owns removes the external-provider dependency entirely — there is no biller in the loop, so there is nothing to disqualify.
 - **Still a genuine CI/CD story.** This is not a downgrade to "just run it locally" — it is a real, automated pipeline: a GitHub-hosted build/test/push stage, a registry, and an automated pull-and-redeploy stage triggered by the same workflow, using the actual GitHub Actions product (self-hosted runners are a first-class, supported GitHub Actions feature, not a workaround).
 - **Reproducibility.** Anyone can clone the repo, register their own self-hosted runner container, and reproduce the entire push→build→deploy→monitor flow without needing to sign up for anything beyond a free GitHub account they likely already have.
-- **Consistent with CLAUDE.md §4 (Docker-first).** The "VM" being a container, not a bare-metal or cloud host, keeps the entire pipeline inside the project's existing Docker-first operating model.
+- **Consistent with the project's Docker-first standard.** The "VM" being a container, not a bare-metal or cloud host, keeps the entire pipeline inside the project's existing Docker-first operating model.
 
 ## Trade-offs
 
@@ -42,4 +40,4 @@ Adopt, as the single committed pipeline (see `11-cicd.md` for the full design):
 
 ## Next step
 
-Implement per `11-cicd.md` and the Phase 3 implementation order in CLAUDE.md §33, after explicit user approval — no workflow file, runner registration, or registry push exists yet.
+This design was implemented (CI + CD, per `11-cicd.md`) and the CD half was subsequently removed. Current status and any future deployment-target decision start from `06-deployment.md`, not from this ADR — the CI half remains in production use, unchanged.

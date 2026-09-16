@@ -1,59 +1,56 @@
 # 10 — Testing Strategy
 
+Status markers follow `01-project-overview.md`'s vocabulary.
+
 ## CURRENT STATE — Confirmed test inventory
 
-Repository-wide search confirms **exactly 4 test files exist, all Go unit tests on leaf utility packages**, and zero tests of any other kind:
+Repository-wide search confirms **7 Go test files**, up from the original audit's 4 — three new handler-level unit tests were added alongside the security fixes:
 
-| File                                        | What it covers                                                                                                                                                               | Kind                                   |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `backend/internal/auth/apikey_test.go`      | `GenerateAPIKey` randomness/prefix/hash-consistency, `ExtractBearerToken` parsing                                                                                            | Unit                                   |
-| `backend/internal/redis/ratelimit_test.go`  | Sliding-window `Allow()` under/over limit, window sliding — **requires a live Redis** (`testClient` calls `c.Ping` and `t.Skipf`s if unreachable, `ratelimit_test.go:11-15`) | Integration-lite (skips without infra) |
-| `backend/internal/redis/stream_test.go`     | Push/read/ack round-trip on the Redis Stream, `HashIP` determinism, `StreamLen` — also requires live Redis, same skip pattern                                                | Integration-lite                       |
-| `backend/internal/shortcode/base62_test.go` | Encode/decode round-trip, uniqueness over 10k sequential IDs, invalid-character rejection                                                                                    | Unit                                   |
+| File | What it covers | Kind |
+| --- | --- | --- |
+| `backend/internal/auth/apikey_test.go` | `GenerateAPIKey` randomness/prefix/hash-consistency, `ExtractBearerToken` parsing | Unit |
+| `backend/internal/redis/ratelimit_test.go` | Sliding-window `Allow()` under/over limit, window sliding — requires a live Redis (skips if unreachable) | Integration-lite |
+| `backend/internal/redis/stream_test.go` | Push/read/ack round-trip on the Redis Stream, `HashIP` determinism, `StreamLen` — requires live Redis | Integration-lite |
+| `backend/internal/shortcode/base62_test.go` | Encode/decode round-trip, uniqueness over 10k sequential IDs, invalid-character rejection | Unit |
+| `backend/internal/handlers/apikeys_test.go` | ✅ New: verification-token generation/hashing, expiry logic | Unit |
+| `backend/internal/handlers/shorten_test.go` | ✅ New: `validateURL` scheme/format validation | Unit |
+| `backend/internal/handlers/stats_test.go` | ✅ New: `ownsLink` authorization logic (the exact SEC-02a/b regression check the original audit called for) | Unit |
 
-**Confirmed absent** (verified by `find`/`grep`, not assumed):
+**Still confirmed absent** (verified by `find`/`grep`, not assumed):
 
-- **No handler tests** — `shorten.go`, `redirect.go`, `stats.go`, `apikeys.go`, `health.go` have zero test coverage. The most security-and-correctness-critical code in the repo (auth middleware ordering, ownership checks, validation) is entirely untested.
-- **No `prisma_store.go` tests** — the full-table-scan aggregation logic, the `GetOrCreateUserByEmail` race condition (see `03-data-model.md`), and every SQL interaction are untested.
-- **No middleware tests** — `OptionalAPIKeyAuth`, `RateLimit` (the middleware wrapper, as opposed to the underlying `redis.Allow` which _is_ tested), CORS, metrics middleware.
-- **No worker tests** — `worker.go`'s batching, ack, and error-handling/retry logic (the `time.Sleep(1s)` backoff, partial-batch-failure handling) is untested.
-- **No integration tests** — nothing spins up the full API + Postgres + Redis stack and exercises an end-to-end flow (create → redirect → stats).
-- **No frontend tests** — zero `*.test.jsx`/`*.spec.jsx` files anywhere under `frontend/`; no Vitest/Jest/React Testing Library dependency in `frontend/package.json`.
-- **No E2E tests** — no Playwright/Cypress config or dependency anywhere.
-- **No security tests** — no automated check for the auth/authorization gaps documented in `05-security.md` (e.g. a test asserting `/api/stats/:shortCode` requires ownership would have caught SEC-02a as a regression the moment it's fixed).
-- **No load/performance tests** — the scalability claims in `07-scalability.md` are architectural analysis, not measured; there is no `k6`/`vegeta`/`hey` script or config anywhere in the repo to validate them.
-- **No concurrency tests** beyond what the Redis rate-limit tests incidentally exercise sequentially (not concurrently) — the `GetOrCreateUserByEmail` race (`03-data-model.md`) has no test reproducing it, e.g. via `go test -race` with concurrent goroutines hammering `POST /api/keys` with the same new email.
-- **No CI** to run even the 4 existing tests automatically — confirmed via absence of `.github/`. Tests exist but nothing enforces they pass before merge.
+- **No `prisma_store.go` tests** — the still-unfixed `GetTopLinks`/`GetLinkStats` full-table-scan aggregation logic, and every SQL interaction, remain untested. The `GetOrCreateUserByEmail` fix (now an atomic upsert) has no regression test proving it no longer races.
+- **No middleware tests** — `OptionalAPIKeyAuth`, `RequireAPIKeyAuth`, `RateLimit` (the middleware wrapper), CORS, metrics middleware — unchanged.
+- **No worker tests** — `worker.go`'s batching, ack, panic-recovery, and error-handling/retry logic is still untested, including the new `recover()` behavior itself.
+- **No integration tests** — nothing spins up the full API + Postgres + Redis stack and exercises an end-to-end flow (create → redirect → stats → delete). Unchanged.
+- **No frontend tests** — zero `*.test.jsx`/`*.spec.jsx` files anywhere under `frontend/`; no Vitest/Jest/RTL dependency. Unchanged.
+- **No E2E tests** — unchanged.
+- **No load/performance tests** — the scalability claims in `07-scalability.md` remain architectural analysis, not measured. Unchanged.
+- **No concurrency tests** — the `GetOrCreateUserByEmail` fix has no `-race` test with concurrent goroutines proving the race is actually closed. Unchanged gap, now more important since the fix itself is unverified by test.
+- **CI now runs the existing tests** — ✅ this part of the original audit's "no CI" gap is resolved (`.github/workflows/ci.yml` runs `go test ./...` on every push/PR), though it does not yet spin up Postgres/Redis service containers for the integration-lite tests, which still silently skip in CI exactly as they did locally.
 
-## Engineering maturity signal (feeds into CLAUDE.md §19 classification)
+## Engineering maturity signal (feeds into overall maturity classification)
 
-Four unit-test files covering only the two lowest-risk, pure-function packages (base62 codec, API key crypto) plus two Redis-dependent tests that silently skip when infra isn't available (meaning they may never have run in whatever environment produced this repo's history) is consistent with **BEGINNER-to-INTERMEDIATE** testing maturity, dragging down an otherwise more sophisticated architecture — reinforces the overall INTERMEDIATE engineering-maturity classification in `01-project-overview.md`.
+Test coverage has grown from "two lowest-risk pure-function packages" to include three new handler-level unit tests, and those tests directly cover some of the auth/authorization logic this project's security fixes depend on (`TestOwnsLink`, verification-token expiry). This is real progress, but it is still narrow: no integration tests, no frontend tests, no concurrency tests, and the highest-risk untested code (`prisma_store.go`'s aggregation queries, the worker) is unchanged from the original audit. Net assessment: **INTERMEDIATE** testing maturity, up from BEGINNER-to-INTERMEDIATE, still the biggest drag on the project's overall engineering-maturity classification in `01-project-overview.md`.
 
-## PROPOSED PRODUCTION STATE — Testing strategy by layer
+## PROPOSED — Testing strategy by layer (still open)
 
-1. **Unit tests** (no infra required, fast, run on every commit):
-   - `prisma_store.go`'s pure transformation logic (once refactored per `03-data-model.md` to real SQL aggregation, the remaining Go-side mapping logic should still be unit-tested)
-   - Request validation logic in every handler (`validateURL`, alias pattern, expiry parsing) — currently exercised only implicitly
-   - `redis.HashIP`, rate-limit tier resolution logic in `middleware/ratelimit.go`
+1. **Unit tests** (no infra required):
+   - `prisma_store.go`'s pure transformation logic (once `GetTopLinks`/`GetLinkStats` are refactored per `03-data-model.md` to real SQL aggregation, the remaining Go-side mapping logic should still be unit-tested).
+   - Remaining request validation logic not yet covered.
 
-2. **Integration tests** (real Postgres + Redis, run via Docker Compose in CI, Docker-first per CLAUDE.md §4):
-   - Full `PrismaStore` CRUD + the `GetOrCreateUserByEmail` concurrency race, run with `-race` and concurrent goroutines to reproduce and then verify the fix from `03-data-model.md`
-   - `AnalyticsWorker` end-to-end: push events to the stream, run the worker, assert Postgres rows land and are ACKed; assert a single bad event doesn't block the batch (already-implemented behavior, currently unverified by any test)
+2. **Integration tests** (real Postgres + Redis, run via Docker Compose in CI):
+   - Full `PrismaStore` CRUD + a concurrency test for `GetOrCreateUserByEmail` (run with `-race` and concurrent goroutines) to actually verify the upsert fix holds under contention, not just read as correct.
+   - `AnalyticsWorker` end-to-end, including a test that intentionally triggers the new `recover()` path and asserts the worker resumes processing afterward.
 
-3. **API/handler tests** (using Fiber's `app.Test()` httptest-style harness, no real network needed, Postgres/Redis can be the same Compose-provided instances as integration tests):
-   - Auth middleware ordering (does `RateLimit` correctly read `OptionalAPIKeyAuth`'s context value)
-   - **Authorization regression tests** for every finding in `05-security.md` — e.g. `TestGetLinkStats_RequiresOwnership` (currently would fail, documenting the gap as an explicit, visible red test until fixed — a good practice for tracking known issues as code rather than only as prose)
-   - Status code correctness for every documented endpoint in `04-api-design.md`
+3. **API/handler tests** (Fiber's `app.Test()`):
+   - Auth middleware ordering.
+   - Regression tests locking in the now-fixed SEC-01/SEC-02a/SEC-02b behavior (e.g. `TestGetLinkStats_RequiresOwnership` should now pass — add it as a permanent regression guard, not just document the fix in prose).
+   - Status code correctness for the two new endpoints (`GET /api/keys/verify`, `DELETE /api/links/:shortCode`).
 
-4. **Frontend tests** (Vitest + React Testing Library — both free, no paid service, integrate naturally with the existing Vite toolchain):
-   - `AuthContext`/`ProtectedRoute` behavior
-   - Regression test for the `AdminPage.jsx` bug once fixed (assert the page renders real numbers given a mocked JSON metrics response, not the raw Prometheus text)
-   - `DashboardPage.jsx` delete flow once implemented for real (assert it calls the DELETE endpoint, not just local state)
+4. **Frontend tests** (Vitest + React Testing Library): still not started. `AuthContext`/`ProtectedRoute` behavior, a regression test for the still-broken `AdminPage.jsx` once it's fixed, and a test asserting `DashboardPage.jsx`'s delete flow calls the real `DELETE` endpoint (now that it does — this should be locked in with a test, not just visually confirmed).
 
-5. **Security tests**: encode the SEC-01 through SEC-07 findings as automated tests where feasible (e.g. SEC-01's "any email works" is inherently hard to "fix" with just tests since the intended fix requires new functionality — email verification — but the _regression_ — "an API key for user A can list user B's `/api/links`" — is directly testable today and should be, as it's a concrete authorization boundary check independent of whether email verification ships).
+5. **Security tests**: several of the original findings this section named (SEC-01, SEC-02a/b) are now fixed in code but still lack automated regression tests beyond the new `TestOwnsLink` unit test — add handler-level tests that actually exercise the HTTP layer (auth header required, 404 for non-owner) rather than only the underlying `ownsLink` helper.
 
-6. **Performance/load tests**: a minimal `k6` (free, open source) script exercising `/:shortCode` redirect and `/api/stats/top` at increasing concurrency, run manually before each production deploy milestone (not necessarily in CI, given free-tier CI minute constraints) — needed to convert the `07-scalability.md` UNKNOWN items (connection pool behavior, actual QPS ceilings) into measured facts.
+6. **Performance/load tests**: still not started. A minimal `k6` script exercising `/:shortCode` and `/api/stats/top` at increasing concurrency remains the way to convert `07-scalability.md`'s UNKNOWN items into measured facts.
 
-7. **CI wiring**: GitHub Actions (GENUINELY FREE per `06-deployment.md`) running `go vet`, `go test ./...` (unit + integration via a Postgres/Redis service container, which GitHub Actions provides free), and `npm test` for frontend, on every PR — currently **zero** CI exists, so this is a net-new addition, not a fix to something broken.
-
-Implementation of all of the above is a Phase 3 concern once the user approves — this document defines the target, per CLAUDE.md §18.
+7. **CI wiring**: ✅ partially done — `go test ./...` now runs in CI. Still missing: Postgres/Redis service containers in the CI job (so the integration-lite Redis tests actually run instead of skipping) and `npm test` for the frontend (no frontend tests exist yet to run).

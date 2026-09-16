@@ -1,7 +1,11 @@
 # ADR-0005: Introduce nginx reverse proxy (TLS, security headers, optional URL masking) and deploy the containerized stack to an always-on free host
 
 ## Status
-Proposed — pending Phase 2 approval per CLAUDE.md §31. Nothing in this ADR has been implemented; no nginx config, deployment account, or infrastructure change exists yet.
+
+**Split decision, two independent parts:**
+
+- **nginx reverse proxy (headers/routing scope): Accepted and implemented.** `nginx/nginx.conf` now runs in front of the API in `docker-compose.yml`, providing security headers, gzip, and a single public entrypoint. TLS termination is not yet configured — deployment-target-dependent. URL masking/cloaking was **not adopted**; the shipped config keeps standard 302-redirect semantics, with the masking option documented and disabled by default (see `02-high-level-design.md`).
+- **Deployment target (Oracle/Render/Cloud Run options below): Superseded, then moot.** This ADR's deployment-target decision was superseded by `adr/0007-cicd-pipeline.md`'s self-hosted-runner design. That design was itself implemented and later removed. The options below are preserved as the original evaluation; they reflect neither the current plan (there is none — see `06-deployment.md`) nor an active recommendation.
 
 ## Problem
 Two related gaps exist in the current deployment posture (see `02-high-level-design.md` and `06-deployment.md`):
@@ -16,36 +20,29 @@ Two related gaps exist in the current deployment posture (see `02-high-level-des
 3. **nginx reverse proxy + Approach A: proxy_pass destination content under the short-URL path, with `sub_filter` rewriting relative links.** Satisfies masking for simple destinations. Breaks unpredictably for destinations with JS-driven asset loading, protocol-relative URLs, or service workers bound to their own origin; increases bandwidth cost (full response bodies flow through the proxy instead of a few-hundred-byte 302); raises phishing/cloaking classification risk with browsers and scanners; raises consent/liability questions for displaying third-party content under this project's domain.
 4. **nginx reverse proxy + Approach B: full-page iframe shell served at the short-URL path.** Simpler to implement than Approach A but fails completely against any destination sending `X-Frame-Options`/CSP `frame-ancestors` (a large share of real sites) — no generic nginx-side fix without also proxying (converging back to Option 3).
 
-## Decision
-Adopt, pending approval:
+## Decision — nginx and masking
 
-- **nginx as a reverse proxy** in front of the API for TLS termination, security headers, and env-driven CORS/routing (Option 2's scope) — low-risk, directly addresses cited blockers in `05-security.md`/`06-deployment.md`.
-- **URL masking (Options 3/4) is documented as an available but NOT default-recommended option.** Both mechanisms are explained in `02-high-level-design.md` with their honest trade-offs. Whether to enable masking, and via which approach, is a product decision reserved for explicit user approval — this ADR does not pre-select one, and neither should be implemented without that approval given the phishing-classification, legal/liability, bandwidth, SEO, and reliability caveats documented there.
+Adopted (Option 2's scope) and implemented:
 
-## Options considered — deployment target
+- **nginx as a reverse proxy** in front of the API for security headers, gzip, and routing (`nginx/nginx.conf`, wired into `docker-compose.yml`) — directly addresses the cited blockers. TLS termination was not part of this scope and remains deployment-target-dependent.
+- **URL masking (Options 3/4) was not adopted.** Both mechanisms remain documented in `02-high-level-design.md` with their honest trade-offs, kept available as a reference if a future product decision revisits this — the shipped config keeps standard 302-redirect semantics with masking explicitly commented out and disabled by default.
 
-> **Status: removed / superseded — deployment approach TBD.** The self-hosted-runner/simulated-VM deploy pipeline described by `adr/0007-cicd-pipeline.md` (which this section previously said superseded the options below) has been **removed** from the repository (`deploy/` and `.github/workflows/deploy.yml` deleted). Deployment target is once again undecided and left for a future decision. The nginx reverse-proxy decision above (scope/masking) is unaffected.
->
-> **SUPERSEDED (historical).** The deployment-target options and decision recorded below (Oracle/Render/Cloud Run) are superseded by the (now-removed) pipeline previously recorded in `adr/0007-cicd-pipeline.md`. This section is preserved as immutable history of the options originally evaluated; it does not reflect the current plan.
+## Options considered — deployment target (historical; see Status above)
 
-1. **Fly.io.** Rejected — no longer offers an uncapped always-free tier; requires a card with automatic billing past a small allowance, failing CLAUDE.md §20.
+1. **Fly.io.** Rejected — no longer offers an uncapped always-free tier; requires a card with automatic billing past a small allowance, failing the zero-cost constraint.
 2. **Render free web service.** No card required; sleeps after 15 min idle causing 30-60s+ cold starts on both redirects and Grafana access. Genuinely free but undermines the "always-on, showcase-quality" goal.
 3. **Google Cloud Run.** Free-tier-genuine only for scale-to-zero traffic (still has cold starts) or requires min-instances≥1 for always-on, which consumes the free allowance faster and risks billing without a hard $0 budget alert enforced. Card required at signup regardless.
 4. **Oracle Cloud "Always Free" VM (Ampere ARM shape).** Permanently free compute (not a trial/credit), sized enough (up to 4 OCPU/24GB RAM) to run the full 6-container stack (api+postgres+redis+prometheus+grafana+nginx) on one host, genuinely always-on with no cold starts. Requires a card on file at account creation (Oracle states Always-Free usage itself does not auto-charge) and carries a documented, discretionary risk of Oracle reclaiming resources judged idle — a real but limited risk for an actively-serving instance.
 
-## Decision
-Adopt, pending approval:
+## Decision — deployment target (historical; superseded, see Status)
 
-- **Primary proposed target: Oracle Cloud Always-Free VM**, running the full docker-compose stack (api, postgres, redis, prometheus, grafana, nginx) as one continuously-reachable host — chosen because it uniquely satisfies both the redirect-latency requirement (no cold start on the hot path) and the resume/showcase requirement (live, always-reachable Grafana dashboards with real traffic).
-- **Fallback: Render free tier**, for a strict no-card reading of CLAUDE.md §20, accepting cold-start latency as the trade-off.
-- **Explicit conflict flagged, not resolved here:** Oracle's card-at-signup requirement is in tension with CLAUDE.md §20's "never introduce services requiring a card" language, even though Oracle's Always-Free compute is genuinely, permanently free once provisioned. This ADR does not resolve that tension — it is presented to the user in Phase 2 as an accept/reject decision, per CLAUDE.md §21 and §31.
+At the time this ADR was written, the recorded decision was: primary target Oracle Cloud Always-Free VM, fallback Render free tier, with the Oracle card-at-signup conflict flagged but not resolved. **This decision was superseded before implementation** by `adr/0007-cicd-pipeline.md`'s self-hosted-runner design, which was itself later implemented and then removed. No cloud-hosted target from this list was ever deployed. Preserved here as the original evaluation only.
 
 ## Trade-offs
 
-- **nginx (proxy scope only):** minimal — adds one more container/config surface to operate and monitor, in exchange for solving TLS/header/CORS blockers that are prerequisites for any deployment target regardless of masking.
-- **Masking (if later approved):** fragile, higher operational/security/legal exposure, higher bandwidth cost, real risk of phishing/cloaking misclassification, and no partial/safe middle ground — documented in full in `02-high-level-design.md`.
-- **Oracle Always-Free:** best latency/showcase outcome; carries a card-on-file requirement (conflicts with the strictest reading of the zero-cost policy) and a non-contractual reclamation risk for idle resources (mitigated, not eliminated, by the instance being actively used).
-- **Render fallback:** zero card-requirement conflict, but the cold-start behavior directly undermines both the redirect-latency goal and the "always-reachable dashboard" showcase goal that motivated evaluating an always-on host in the first place.
+- **nginx (proxy scope only):** minimal — adds one more container/config surface to operate and monitor, in exchange for solving header/CORS blockers that are prerequisites for any deployment target regardless of masking. This trade-off was accepted and is now realized in the running stack.
+- **Masking (not adopted):** fragile, higher operational/security/legal exposure, higher bandwidth cost, real risk of phishing/cloaking misclassification, and no partial/safe middle ground — documented in full in `02-high-level-design.md`. This is why it wasn't adopted.
+- **Oracle Always-Free / Render fallback:** historical only — neither was ever provisioned; see `06-deployment.md` for current (undecided) deployment status.
 
 ## Next step
-Present both decisions (nginx scope/masking, and deployment target) to the user for explicit Phase 2 approval before any implementation, config file, or account is created, per CLAUDE.md §31.
+The nginx/masking decision is implemented and closed. The deployment-target question is open again — see `06-deployment.md` for current status before making any new infrastructure decision.

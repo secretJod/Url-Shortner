@@ -1,7 +1,7 @@
 # ADR-0006: Container-native process management (reject PM2), fully containerized dev/build/run lifecycle, Compose-first showcase
 
 ## Status
-Proposed — pending Phase 2 approval per CLAUDE.md §31. Nothing in this ADR has been implemented; no compose/Dockerfile/CI changes exist yet.
+✅ **Accepted and implemented.** PM2 remains rejected. `docker-compose.yml` now has `healthcheck` blocks on all services (previously only `postgres`/`redis`); `restart: unless-stopped` and the existing SIGTERM handling in `main.go` are unchanged and already correct. The optional orchestration step-up (Docker Swarm or k3s/kind) discussed below remains proposed only — not adopted.
 
 ## Problem
 
@@ -37,7 +37,7 @@ The user asked whether PM2 should be used to manage this project's processes, an
 For a stronger "process management at scale" story than a single-host Compose file, two zero-cost, container-native options:
 
 1. **Docker Swarm.** Can deploy the *same* `docker-compose.yml` nearly as-is via `docker stack deploy -c docker-compose.yml <stack>` (Swarm reads Compose v3 files natively). Adds: replica counts, rolling updates, declarative restart policies at the orchestrator level (`deploy.restart_policy`), and a multi-node story if ever needed — all with minimal new configuration surface beyond the existing compose file. Lowest-effort step-up.
-2. **Lightweight Kubernetes (k3s or kind), local/free.** Stronger resume signal (Kubernetes experience is a more common industry ask than Swarm), but requires writing actual K8s manifests (Deployments, Services, ConfigMaps, health/readiness probes) — meaningfully more setup than Swarm reusing the existing compose file. Both k3s and kind are genuinely free (local binaries, no cloud spend), consistent with CLAUDE.md §20.
+2. **Lightweight Kubernetes (k3s or kind), local/free.** Stronger resume signal (Kubernetes experience is a more common industry ask than Swarm), but requires writing actual K8s manifests (Deployments, Services, ConfigMaps, health/readiness probes) — meaningfully more setup than Swarm reusing the existing compose file. Both k3s and kind are genuinely free (local binaries, no cloud spend), consistent with the project's zero-cost constraint.
 
 Neither is required for correctness today — both are presented as an optional maturity step-up, distinct from the "reject PM2" decision, which stands on its own regardless of whether an orchestrator is ever adopted.
 
@@ -56,4 +56,4 @@ Adopt, pending approval:
 - **Not adding a general-purpose in-container init system (`tini`):** correct for the current single-process-per-container shape; would need revisiting only if a container's entrypoint ever spawned multiple long-lived subprocesses (not the case today for any of the 5 services).
 
 ## Next step
-Present this decision alongside `06-deployment.md`'s PROPOSED "Fully containerized operations & process management" section for explicit Phase 2 approval before adding any healthcheck, compose `deploy.restart_policy` block, Swarm/k3s config, or CI change, per CLAUDE.md §31.
+Present this decision alongside `06-deployment.md`'s PROPOSED "Fully containerized operations & process management" section for explicit Phase 2 approval before adding any healthcheck, compose `deploy.restart_policy` block, Swarm/k3s config, or CI change.
