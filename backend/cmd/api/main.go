@@ -88,6 +88,12 @@ func main() {
 		return nil
 	})
 
+	// JSON metrics endpoint for the admin dashboard (Prometheus /metrics above
+	// stays in the standard exposition format for scrapers).
+	app.Get("/api/metrics", func(c *fiber.Ctx) error {
+		return c.JSON(appMetrics.Snapshot())
+	})
+
 	// Auth + rate limit middleware
 	authMW := middleware.OptionalAPIKeyAuth(linkStore)
 	requireAuthMW := middleware.RequireAPIKeyAuth(linkStore)

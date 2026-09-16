@@ -29,7 +29,7 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const res = await apiClient.get('/metrics');
+        const res = await apiClient.get('/api/metrics');
         setMetrics(res.data);
       } catch (error) {
         showToast(error.message || 'Failed to fetch metrics', 'error');

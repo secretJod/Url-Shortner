@@ -10,19 +10,19 @@ import { motion } from 'framer-motion';
 const getMedalStyle = (index) => {
   if (index === 0) return {
     bg: 'bg-gradient-to-br from-yellow-300 to-amber-500',
-    text: 'text-white',
+    text: 'text-amber-950',
     glow: 'rgba(250, 204, 21, 0.5)',
     ring: 'shadow-[0_0_25px_rgba(250,204,21,0.5)]',
   };
   if (index === 1) return {
     bg: 'bg-gradient-to-br from-gray-200 to-gray-400',
-    text: 'text-white',
+    text: 'text-gray-900',
     glow: 'rgba(156, 163, 175, 0.5)',
     ring: 'shadow-[0_0_25px_rgba(156,163,175,0.4)]',
   };
   if (index === 2) return {
     bg: 'bg-gradient-to-br from-orange-300 to-amber-700',
-    text: 'text-white',
+    text: 'text-orange-950',
     glow: 'rgba(217, 119, 6, 0.5)',
     ring: 'shadow-[0_0_25px_rgba(217,119,6,0.4)]',
   };
