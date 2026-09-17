@@ -98,6 +98,10 @@ func (s *PrismaStore) GetLinkByShortCode(ctx context.Context, shortCode string) 
 	if passwordHash, ok := found.PasswordHash(); ok {
 		result.PasswordHash = &passwordHash
 	}
+	if uid, ok := found.UserID(); ok {
+		id := uint64(uid)
+		result.UserID = &id
+	}
 
 	// Treat expired links as not found — caller shouldn't redirect to them.
 	if result.ExpiresAt != nil && result.ExpiresAt.Before(time.Now()) {

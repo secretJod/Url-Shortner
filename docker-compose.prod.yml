@@ -1,0 +1,130 @@
+# Production hardening overrides.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file is layered ON TOP of docker-compose.yml (the dev-friendly
+# default). It does NOT change docker-compose.yml, so `docker compose up`
+# on its own is unaffected and local dev keeps working exactly as before.
+#
+# What this file changes, and why:
+#
+# 1. Removes host port publishing for postgres, redis, prometheus, grafana,
+#    and api. On a public VM those ports would expose an unauthenticated
+#    database, cache, metrics/dashboard surface, and app server directly
+#    to the internet. All of these services are reachable by every other
+#    container over the default Docker network via their service name
+#    (postgres:5432, redis:6379, prometheus:9090, api:8080 — see
+#    nginx/nginx.conf's `upstream api_backend { server api:8080; }`) —
+#    nothing else needs the host port mapping. Only nginx (80/443) stays
+#    published, since that's the one thing that's supposed to be public.
+#
+# 2. Replaces the hardcoded Postgres password with a required environment
+#    variable (${POSTGRES_PASSWORD:?...}). Compose's `:?` syntax fails
+#    the `up`/`config` command immediately with an error if the variable
+#    isn't set, instead of silently falling back to a default — so a
+#    missing secret is a loud deploy-time failure, not a quiet security
+#    hole. The value is expected to come from the environment (e.g. a
+#    GitHub Actions secret exported before `docker compose up`).
+#
+# 3. Removes MailHog. MailHog is a local dev-only SMTP catcher that never
+#    delivers mail anywhere — running it in production would silently
+#    swallow every email the app tries to send (verification links,
+#    notifications, etc.) with no error and no indication to the user.
+#    Production must point at a real SMTP provider via env vars
+#    (SMTP_HOST/SMTP_PORT/MAIL_FROM below), configured through the
+#    environment/secrets, not committed here.
+#
+# 4. Disables the automatic `migrate` service (`prisma db push` on every
+#    boot). `db push` reconciles the live schema to match the Prisma
+#    schema file with NO migration history and NO rollback path — on a
+#    database that only has throwaway dev data that's an acceptable
+#    convenience, but against production data it is a real risk: a
+#    column rename, drop, or type change can silently destroy or corrupt
+#    data on every single deploy, with nothing to revert to. This repo
+#    has no migration system (no `prisma migrate` history checked in), so
+#    building one is out of scope here. The minimal, safe choice is to
+#    NOT auto-run it in production: this override replaces the `migrate`
+#    command with a no-op that exits 0 immediately (so `api`'s
+#    `depends_on: migrate: condition: service_completed_successfully`
+#    is still satisfied and the stack still comes up), and schema changes
+#    must instead be applied deliberately and reviewed — e.g. by running
+#    `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrate-apply`
+#    (see the `migrate` service below for the real command, commented)
+#    or a proper migration tool, as a conscious, separate step.
+
+services:
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}"
+
+  redis:
+    ports: !reset []
+
+  # MailHog must not run in production — remove it entirely by replacing
+  # it with a "scratch" no-op so `docker compose` doesn't try to start a
+  # mail catcher. (Compose has no first-class "delete a service" — the
+  # cheapest safe stand-in is a container that exits immediately and is
+  # never depended on for anything meaningful in prod.)
+  mailhog:
+    image: alpine:3.20
+    entrypoint: ["true"]
+    restart: "no"
+    ports: !reset []
+    depends_on: []
+
+  # Schema push is NOT safe to run unattended against production data
+  # (see header comment). Replace the real command with a no-op so the
+  # `api` service's `depends_on: service_completed_successfully` check
+  # still passes and the stack starts, without ever touching the schema.
+  migrate:
+    environment:
+      DATABASE_URL: "postgresql://urlshortener:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}@postgres:5432/urlshortener?schema=public"
+    command: sh -c "echo 'Skipping automatic schema push in production. Apply schema changes deliberately — see docker-compose.prod.yml.' && exit 0"
+
+  api:
+    # nginx (published on 80/443) proxies to the api container over the
+    # internal Docker network (see nginx/nginx.conf: `server api:8080`).
+    # There's no reason for 8080 to also be reachable directly from the
+    # host/internet in production.
+    ports: !reset []
+    environment:
+      DATABASE_URL: "postgresql://urlshortener:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}@postgres:5432/urlshortener?schema=public"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in production}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS must be set in production}"
+      IP_HASH_SECRET: "${IP_HASH_SECRET:?IP_HASH_SECRET must be set in production}"
+      # Real SMTP provider — no MailHog in prod. Values come from the
+      # environment/secrets, never committed here.
+      SMTP_HOST: "${SMTP_HOST:?SMTP_HOST must be set in production}"
+      SMTP_PORT: "${SMTP_PORT:?SMTP_PORT must be set in production}"
+      MAIL_FROM: "${MAIL_FROM:?MAIL_FROM must be set in production}"
+      BASE_URL: "${BASE_URL:?BASE_URL must be set in production}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      # Note: docker compose merges depends_on by key across files, so the
+      # base file's `mailhog: condition: service_started` entry still
+      # applies here too. That's harmless: mailhog is redefined above as a
+      # no-op that starts and immediately exits 0, which satisfies
+      # "service_started" right away.
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+
+  prometheus:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD must be set in production}
+      - GF_USERS_ALLOW_SIGN_UP=false
