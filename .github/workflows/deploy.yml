@@ -1,0 +1,26 @@
+name: Deploy
+
+# Runs on a self-hosted runner installed on the target machine (e.g. WSL on a
+# Windows PC with Docker Desktop). On every push to main it checks out the repo
+# on that machine and brings the full stack up with docker compose.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provide environment files
+        run: |
+          cp .env.example .env
+          cp backend/.env.example backend/.env
+
+      - name: Deploy the stack
+        run: docker compose up -d --build
+
+      - name: Show running services
+        run: docker compose ps
