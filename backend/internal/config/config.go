@@ -19,6 +19,8 @@ type Config struct {
 	IPHashSecret       string
 	SMTPHost           string
 	SMTPPort           string
+	SMTPUser           string
+	SMTPPassword       string
 	MailFrom           string
 }
 
@@ -35,6 +37,8 @@ func Load() *Config {
 		IPHashSecret:       getEnv("IP_HASH_SECRET", "dev-insecure-secret"),
 		SMTPHost:           getEnv("SMTP_HOST", "localhost"),
 		SMTPPort:           getEnv("SMTP_PORT", "1025"),
+		SMTPUser:           getEnv("SMTP_USER", ""),
+		SMTPPassword:       getEnv("SMTP_PASSWORD", ""),
 		MailFrom:           getEnv("MAIL_FROM", "no-reply@linksnip.local"),
 	}
 

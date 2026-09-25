@@ -89,7 +89,7 @@ func main() {
 	requireAuthMW := middleware.RequireAPIKeyAuth(linkStore)
 	rateLimitMW := middleware.RateLimit(rdb)
 
-	mailer := mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.MailFrom)
+	mailer := mail.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.MailFrom, cfg.SMTPUser, cfg.SMTPPassword)
 	apiKeys := handlers.NewAPIKeyHandler(linkStore, mailer, cfg.BaseURL)
 	app.Post("/api/keys", rateLimitMW, apiKeys.CreateKey)
 	app.Get("/api/keys/verify", rateLimitMW, apiKeys.VerifyKey)

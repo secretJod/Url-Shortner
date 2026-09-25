@@ -7,7 +7,17 @@ on:
     branches: [main]
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # Hardcoded lowercase, NOT ghcr.io/${{ github.repository }}.
+  #
+  # `github.repository` is `secretJod/Url-Shortner` — mixed case. Docker image
+  # references must be entirely lowercase, and docker/build-push-action does
+  # not normalize this, so the interpolated form produced an invalid reference
+  # and the push step could not publish the image.
+  #
+  # This value must stay byte-identical to the `image:` in
+  # docker-compose.prod.yml, since deploy.yml pulls exactly what this pushes.
+  # If the repo is ever renamed or moved, update both files together.
+  IMAGE_NAME: ghcr.io/secretjod/url-shortner
 
 jobs:
   test:
@@ -26,7 +36,11 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: go test ./... || echo "no tests found, skipping"
+        # No `|| echo` fallback: a failing test must fail the job. The repo has
+        # real tests (internal/auth, handlers, mail, redis, shortcode), so
+        # swallowing the exit code meant a broken build could still be tagged
+        # and pushed to GHCR, and then deployed by deploy.yml.
+        run: go test ./...
 
   build:
     needs: test
