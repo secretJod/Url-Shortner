@@ -57,6 +57,31 @@ to in `.env`. A Prometheus datasource and an "URL Shortener Overview"
 dashboard (request rate, redirect outcomes, rate-limit decisions) are
 provisioned automatically.
 
+## Running in GitHub Codespaces (demo)
+
+For showing the app running with a live public link, without any machine of
+your own:
+
+1. **Code → Codespaces → Create codespace on main.** `.devcontainer/`
+   installs Docker-in-Docker, generates `.env`/`backend/.env`, points
+   `BASE_URL`/`CORS_ALLOWED_ORIGINS` at this codespace's own forwarded URL,
+   and brings the whole stack up — no manual steps.
+2. **Ports tab → port 80 → Port Visibility → Public.** This is the only port
+   that should ever be made public — everything else (Postgres, Redis, the
+   api container, Prometheus, Grafana, MailHog's UI) defaults to private,
+   same rule as the hardened production overlay below.
+3. Open the forwarded URL for port 80 — that's the live app.
+4. To read a verification email: **Ports tab → port 8025 → open in
+   browser.** Keep this port private; its web UI lists every user's
+   verification link.
+
+This is a **demo environment, not a production deployment**: GitHub's free
+tier gives ~60 core-hours/month on a 2-core codespace, it auto-suspends after
+~30 minutes idle, and `pg_data` lives only inside that codespace — delete or
+rebuild it and the data is gone. It runs the plain `docker-compose.yml`
+(MailHog visible, no secret hardening), not the production overlay. For an
+always-on public deployment with real secrets, see `DEPLOY.md`.
+
 ## CI/CD
 
 `.github/workflows/ci.yml` runs on every push/PR to `main`: `go test`, then
