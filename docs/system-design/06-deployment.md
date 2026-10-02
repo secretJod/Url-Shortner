@@ -17,7 +17,7 @@ Status markers follow `01-project-overview.md`'s vocabulary.
 - **✅ CORS is env-driven** (`CORS_ALLOWED_ORIGINS`) — closes the original "hardcoded localhost, hard blocker to deployment" finding.
 - **✅ Health check now covers Postgres and Redis** (see `08-reliability.md`) — a platform's own health-check-based restart/routing logic would now behave correctly.
 - **✅ Redis is password-protected** (`requirepass` via `REDIS_PASSWORD`) in `docker-compose.yml`. **🐞 Postgres's password is still hardcoded in plaintext** in the compose file rather than sourced from `.env` — see `05-security.md` SEC-05.
-- **No `.dockerignore` found** at repo root or `backend/` — not independently verified as a security issue, but worth confirming before hardening (`.gitignore` excludes `.env`, but Docker build-context inclusion is governed by `.dockerignore`, which doesn't exist).
+- **✅ `.dockerignore` present** at both repo root and `backend/`, so the Docker build context is governed rather than inheriting everything `.gitignore` happens to allow.
 
 ## What must still change before any real deployment target is chosen
 

@@ -17,7 +17,19 @@ import (
 )
 
 // verificationTokenTTL bounds how long a magic link is valid for (SEC-01).
-const verificationTokenTTL = 15 * time.Minute
+//
+// Set to 1 hour rather than a tighter 15 minutes because the current
+// deployment delivers mail to an in-network MailHog catcher rather than to
+// the user's inbox (see docker-compose.prod.yml): an admin reads the link out
+// of MailHog over an SSH tunnel and relays the code by hand, so a human
+// round-trip sits between issuing the token and the user using it.
+//
+// This is a deliberate trade-off: a longer window is a longer window for a
+// leaked link to be replayed. It stays bounded, single-use (the token is
+// deleted on verification) and stored only as a hash. If mail delivery moves
+// to a real relay (Brevo et al.) so users receive links directly, shorten
+// this back.
+const verificationTokenTTL = 1 * time.Hour
 
 type apiKeyStore interface {
 	store.UserStore

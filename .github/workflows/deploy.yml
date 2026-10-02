@@ -1,26 +1,193 @@
 name: Deploy
 
-# Runs on a self-hosted runner installed on the target machine (e.g. WSL on a
-# Windows PC with Docker Desktop). On every push to main it checks out the repo
-# on that machine and brings the full stack up with docker compose.
+# Runs on a self-hosted runner installed on the target machine (WSL2 on a
+# Windows PC). It pulls the image ci.yml already built and pushed to GHCR for
+# a given commit, and brings the stack up with the production hardening
+# overlay.
+#
+# ORDERING: this triggers on CI *completion*, not on `push`. Both workflows
+# fire on the same push event and run concurrently, and this job — a checkout
+# and a file write — reaches `docker compose pull` in seconds, long before a
+# hosted runner finishes a Node+Go+Prisma multi-stage build and a GHCR push.
+# Pulling a commit-SHA tag that does not exist yet fails with "manifest
+# unknown" and aborts under `set -euo pipefail`. `workflow_run` makes the
+# dependency explicit so the image is guaranteed to exist before we pull it.
+#
+# SECURITY: triggers are deliberately limited to a successful CI run on
+# `main` and manual `workflow_dispatch`. Never add `pull_request` /
+# `pull_request_target` here — on a self-hosted runner that would execute
+# arbitrary fork PR code on the operator's own machine. Note `workflow_run`
+# itself always runs the workflow file from the default branch, so a fork PR
+# cannot alter what this job does.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
+# One deploy at a time. Two overlapping `compose up` runs against the same
+# stack would fight over container names and volumes.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    # Only deploy a CI run that actually passed. Without this, a workflow_run
+    # event fires on failure and cancellation too, and we would deploy (or
+    # try to) off a red build.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On a workflow_run event the default checkout ref is the default
+          # branch's tip, which may have moved on. Pin to the exact commit CI
+          # built so the compose files we deploy match the image we pull.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Provide environment files
+      - name: Write production .env from GitHub Actions Secrets
+        # CRITICAL: secrets are passed through a step-level `env:` mapping
+        # and referenced as shell variables ($VAR), never interpolated as
+        # `${{ secrets.X }}` directly into the script body. A secret value
+        # containing `$`, a quote, or a newline must not be able to break
+        # this script or leak into the workflow log. `umask 077` before
+        # writing means the resulting .env is created without world/group
+        # read access. ENV=production is set explicitly and unconditionally
+        # — this is what turns on backend/internal/config/config.go's
+        # validateForProduction() placeholder-secret guard. Without it, that
+        # guard is dead code and the app will happily boot with committed
+        # dev secrets.
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          IP_HASH_SECRET: ${{ secrets.IP_HASH_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          GF_SECURITY_ADMIN_PASSWORD: ${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
         run: |
-          cp .env.example .env
-          cp backend/.env.example backend/.env
+          set -euo pipefail
 
-      - name: Deploy the stack
-        run: docker compose up -d --build
+          # SMTP_* are deliberately NOT required. Leaving them unset makes the
+          # stack fall back to the in-network MailHog catcher (see
+          # docker-compose.prod.yml), which is the current operating mode:
+          # mail is never delivered externally, and an admin reads the
+          # verification link out of MailHog over an SSH tunnel and passes the
+          # code to the user by hand. Setting SMTP_HOST/PORT/USER/PASSWORD to
+          # real relay values (e.g. Brevo) switches internal/mail/mail.go to
+          # its STARTTLS + AUTH PLAIN path with no code change.
+          required_vars="POSTGRES_PASSWORD REDIS_PASSWORD IP_HASH_SECRET BASE_URL CORS_ALLOWED_ORIGINS GF_SECURITY_ADMIN_PASSWORD MAIL_FROM"
+          missing=""
+          for var_name in $required_vars; do
+            # Indirect expansion: read the value of the variable named by
+            # $var_name without ever interpolating a secret into this
+            # script's own text.
+            if [ -z "${!var_name:-}" ]; then
+              missing="$missing $var_name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing — set them in repo Settings > Secrets and variables > Actions before deploying."
+            exit 1
+          fi
+
+          umask 077
+          {
+            echo "ENV=production"
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+            echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+            echo "IP_HASH_SECRET=${IP_HASH_SECRET}"
+            echo "BASE_URL=${BASE_URL}"
+            echo "CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}"
+            echo "GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}"
+            echo "SMTP_HOST=${SMTP_HOST}"
+            echo "SMTP_PORT=${SMTP_PORT}"
+            echo "SMTP_USER=${SMTP_USER}"
+            echo "SMTP_PASSWORD=${SMTP_PASSWORD}"
+            echo "MAIL_FROM=${MAIL_FROM}"
+          } > .env
+          chmod 600 .env
+
+      - name: Pull the image ci.yml built for this commit
+        # Deploying the pulled image (rather than rebuilding here) guarantees
+        # we run exactly the artifact CI already tested, and avoids redoing
+        # the Node+Go+Prisma multi-stage build on every push.
+        env:
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+      - name: Deploy the stack (production overlay is mandatory)
+        # The prod overlay (docker-compose.prod.yml) is what strips host
+        # port publishing from postgres/redis/prometheus/grafana/api, swaps
+        # in the ghcr image, disables MailHog and the auto schema-push, and
+        # enforces required secrets via `:?`. Deploying with only
+        # docker-compose.yml would silently drop all of that hardening.
+        env:
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
 
       - name: Show running services
-        run: docker compose ps
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+      - name: Wait for the stack to become healthy
+        run: |
+          set -euo pipefail
+          echo "Waiting for containers to report healthy..."
+          for i in $(seq 1 24); do
+            statuses=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml ps --format '{{.Name}} {{.Health}}')
+            echo "$statuses"
+            if echo "$statuses" | grep -qi "unhealthy"; then
+              echo "::error::A container reported unhealthy."
+              docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100
+              exit 1
+            fi
+            # api has no healthcheck listed as "starting" once ok; consider
+            # the wait done when nothing is still starting.
+            if ! echo "$statuses" | grep -qi "starting"; then
+              echo "All health-checked containers are stable."
+              break
+            fi
+            if [ "$i" -eq 24 ]; then
+              echo "::error::Containers did not become healthy within the timeout."
+              docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Verify the app answers through nginx
+        # nginx is the only published entrypoint in production (see
+        # nginx/nginx.conf: `upstream api_backend { server api:8080; }`).
+        # A successful `docker compose up` does not guarantee the app is
+        # actually reachable, so hit it for real and fail the job if it
+        # doesn't respond correctly.
+        run: |
+          set -euo pipefail
+          ok=""
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/health || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Health check OK (HTTP $code)."
+              ok=1
+              break
+            fi
+            echo "Health check returned HTTP $code, retrying ($i/12)..."
+            sleep 5
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::App did not become reachable through nginx."
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=200
+            exit 1
+          fi

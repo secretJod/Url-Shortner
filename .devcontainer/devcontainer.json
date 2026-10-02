@@ -1,0 +1,43 @@
+{
+  "name": "url-shortener (Codespaces demo)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  // Only port 80 (nginx, the single public entrypoint) is ever meant to be
+  // reachable from outside the Codespace. Everything else — Postgres, Redis,
+  // the api container directly, Prometheus, Grafana, and MailHog's UI — stays
+  // private, same rule as the Windows prod overlay (docker-compose.prod.yml):
+  // only the reverse proxy is public.
+  "forwardPorts": [80, 8025],
+  "portsAttributes": {
+    "80": {
+      "label": "App (via nginx)",
+      "visibility": "public",
+      "onAutoForward": "notify"
+    },
+    "8025": {
+      "label": "MailHog (verification emails) — keep private",
+      "visibility": "private",
+      "onAutoForward": "silent"
+    }
+  },
+  "otherPortsAttributes": {
+    "visibility": "private"
+  },
+
+  // Runs once, when the codespace is first created: generates .env from the
+  // committed examples, points BASE_URL/CORS_ALLOWED_ORIGINS at this
+  // codespace's own forwarded URL (see setup-env.sh — the URL is not known
+  // until the codespace exists), then builds and starts the full stack with
+  // the plain (non-hardened) compose file. This is a demo/dev environment,
+  // not the production target — see docker-compose.prod.yml and DEPLOY.md
+  // for the always-on Windows + self-hosted-runner path.
+  "postCreateCommand": "bash .devcontainer/setup-env.sh && docker compose up -d --build",
+
+  // Runs on every subsequent codespace resume. docker-in-docker's daemon
+  // (and therefore any running containers) does not survive a suspend, so
+  // this brings the already-built stack back up without rebuilding.
+  "postStartCommand": "docker compose up -d"
+}

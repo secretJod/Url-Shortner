@@ -27,13 +27,14 @@
 #    hole. The value is expected to come from the environment (e.g. a
 #    GitHub Actions secret exported before `docker compose up`).
 #
-# 3. Removes MailHog. MailHog is a local dev-only SMTP catcher that never
-#    delivers mail anywhere — running it in production would silently
-#    swallow every email the app tries to send (verification links,
-#    notifications, etc.) with no error and no indication to the user.
-#    Production must point at a real SMTP provider via env vars
-#    (SMTP_HOST/SMTP_PORT/MAIL_FROM below), configured through the
-#    environment/secrets, not committed here.
+# 3. KEEPS MailHog running, but unpublished. This reverses the usual rule
+#    and is deliberate — see the long comment on the `mailhog` service
+#    below for the trade-offs. In short: mail is never delivered
+#    externally; an admin reads verification links out of MailHog over an
+#    SSH tunnel and relays the code by hand. Setting SMTP_HOST/SMTP_PORT/
+#    SMTP_USER/SMTP_PASSWORD switches to a real relay with no code change.
+#    `ports: !reset []` on that service is load-bearing security, not
+#    tidiness.
 #
 # 4. Disables the automatic `migrate` service (`prisma db push` on every
 #    boot). `db push` reconciles the live schema to match the Prisma
@@ -62,17 +63,30 @@ services:
   redis:
     ports: !reset []
 
-  # MailHog must not run in production — remove it entirely by replacing
-  # it with a "scratch" no-op so `docker compose` doesn't try to start a
-  # mail catcher. (Compose has no first-class "delete a service" — the
-  # cheapest safe stand-in is a container that exits immediately and is
-  # never depended on for anything meaningful in prod.)
+  # MailHog DOES run in production in the current operating mode — a
+  # deliberate reversal of the usual "never run a dev mail catcher in prod"
+  # rule, made with the trade-offs understood:
+  #
+  #   - No mail is ever delivered externally. An admin reads the
+  #     verification link out of MailHog by hand and passes the code to the
+  #     user. That does not scale, but it needs no external mail provider.
+  #   - `ports: !reset []` is MANDATORY and is the actual security control
+  #     here. MailHog's web UI (8025) lists every verification link for every
+  #     user — publishing it would let anyone who reaches this host claim any
+  #     account. Unpublished, it exists only on the internal Docker network
+  #     and is unreachable from outside regardless of who knows the port
+  #     number. Reach it deliberately instead:
+  #         ssh -L 8025:localhost:8025 <user>@<host>   # then open localhost:8025
+  #     Never proxy 8025 through nginx or expose it via a tunnel.
+  #   - MailHog holds messages in memory, so a restart drops any unread
+  #     verification mail. Tokens are short-lived anyway (see
+  #     internal/handlers/apikeys.go), so the user simply requests another.
+  #
+  # To switch to a real relay, set SMTP_HOST/SMTP_PORT/SMTP_USER/
+  # SMTP_PASSWORD (see the api service below) — internal/mail/mail.go then
+  # takes its STARTTLS + AUTH PLAIN path automatically. No code change.
   mailhog:
-    image: alpine:3.20
-    entrypoint: ["true"]
-    restart: "no"
     ports: !reset []
-    depends_on: []
 
   # Schema push is NOT safe to run unattended against production data
   # (see header comment). Replace the real command with a no-op so the
@@ -84,21 +98,55 @@ services:
     command: sh -c "echo 'Skipping automatic schema push in production. Apply schema changes deliberately — see docker-compose.prod.yml.' && exit 0"
 
   api:
+    # `docker-compose.yml` builds this service locally (`build:
+    # backend/Dockerfile`). In production we instead deploy the exact image
+    # ci.yml already built and pushed to GHCR for this commit — rebuilding
+    # the Node+Go+Prisma multi-stage image on every deploy host would be
+    # slower, and could drift from what CI actually tested. `build: !reset
+    # null` removes the inherited `build:` section entirely (verified with
+    # `docker compose config` — see DEPLOY.md) so `docker compose pull`/`up`
+    # never tries to build and always pulls `image:` below instead. Note:
+    # ghcr.io requires an all-lowercase image path even though the GitHub
+    # org is `secretJod` — hence `secretjod` here, not the repository's own
+    # casing.
+    build: !reset null
+    image: "ghcr.io/secretjod/url-shortner:${IMAGE_TAG:-latest}"
+    # Least privilege: docker-compose.yml gives api `env_file: - .env`, which
+    # loads the WHOLE file into the container's process environment. In dev
+    # that file holds only placeholders, but in production deploy.yml
+    # consolidates every secret in the system into it — including Grafana's
+    # admin password, which api neither reads nor should ever hold. Anything
+    # that can read this process's environment (a dependency vulnerability, an
+    # env-dumping debug path, a crash reporter) would otherwise get the whole
+    # set. Reset it and pass only what api actually needs, explicitly, below.
+    env_file: !reset []
     # nginx (published on 80/443) proxies to the api container over the
     # internal Docker network (see nginx/nginx.conf: `server api:8080`).
     # There's no reason for 8080 to also be reachable directly from the
     # host/internet in production.
     ports: !reset []
     environment:
+      # ENV reached the container via `env_file: .env` until that was reset
+      # above, so it must be set explicitly here. This is what activates
+      # config.go's validateForProduction() placeholder-secret guard —
+      # without it, that guard is dead code and the app boots happily on
+      # committed dev credentials.
+      ENV: "production"
       DATABASE_URL: "postgresql://urlshortener:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}@postgres:5432/urlshortener?schema=public"
       REDIS_ADDR: "redis:6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in production}"
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS must be set in production}"
       IP_HASH_SECRET: "${IP_HASH_SECRET:?IP_HASH_SECRET must be set in production}"
-      # Real SMTP provider — no MailHog in prod. Values come from the
-      # environment/secrets, never committed here.
-      SMTP_HOST: "${SMTP_HOST:?SMTP_HOST must be set in production}"
-      SMTP_PORT: "${SMTP_PORT:?SMTP_PORT must be set in production}"
+      # Mail: defaults target the in-network MailHog catcher (current
+      # operating mode — see the mailhog service above). These are NOT
+      # required vars: an unset or empty SMTP_USER/SMTP_PASSWORD is what
+      # selects mail.go's unauthenticated path, so `:?` would be wrong here
+      # (it rejects empty as well as unset and would hard-fail the deploy).
+      # Set all four to real values to switch to an authenticated relay.
+      SMTP_HOST: "${SMTP_HOST:-mailhog}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       MAIL_FROM: "${MAIL_FROM:?MAIL_FROM must be set in production}"
       BASE_URL: "${BASE_URL:?BASE_URL must be set in production}"
     depends_on:
