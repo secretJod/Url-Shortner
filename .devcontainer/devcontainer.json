@@ -1,8 +1,18 @@
 {
   "name": "url-shortener (Codespaces demo)",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  // Pinned to a specific Ubuntu release, NOT the floating ":ubuntu" tag.
+  // That tag tracks whatever the newest release is; it resolved to a release
+  // the docker-in-docker feature's default install method (moby-cli
+  // packages) doesn't support, which failed container creation outright and
+  // silently fell back to an empty recovery container (no Docker, no app).
+  "image": "mcr.microsoft.com/devcontainers/base:jammy",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      // Install real Docker CE instead of moby-cli. Keeps working even if a
+      // future base-image bump drops moby packages again — the failure mode
+      // above repeats on every Ubuntu release that doesn't ship them.
+      "moby": false
+    }
   },
 
   // Only port 80 (nginx, the single public entrypoint) is ever meant to be
