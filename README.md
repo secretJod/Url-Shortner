@@ -97,3 +97,19 @@ defines basic alerts (API down, high 5xx rate). Grafana's provisioned
 dashboard (`monitoring/grafana/provisioning/dashboards/urlshortener.json`)
 visualizes request rate, redirect outcomes, and rate-limit decisions from
 those same metrics.
+
+## Demo data
+
+To make a freshly-created local or Codespaces instance look populated
+(sample short links + click analytics) instead of empty, see
+`scripts/seed-demo-data.sql` and `scripts/README.md`. It's demo/seed data
+only, clearly labeled as such, safe to run more than once, and is never run
+automatically by Docker, CI, or the deploy pipeline — it is **not** a
+production seeding tool.
+
+## Case study / write-up
+
+For a fuller technical write-up of the architecture, the CI/CD pipeline,
+and the security decisions behind the production hardening, see
+`CASE_STUDY.md`. For the full design-rationale audit (current state vs.
+proposed improvements, ADRs, known issues) see `docs/system-design/`.
