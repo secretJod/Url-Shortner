@@ -54,3 +54,7 @@ Thumbs.db
 # ─── Tool-generated ──────────────────────────────────────
 .zcode/
 .ai/plans/
+.claude/settings.json
+.claude/settings.local.json
+.claude/memory/
+INTERVIEW_PREP.md
