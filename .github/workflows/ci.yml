@@ -28,7 +28,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: backend/go.sum
+          # Caching disabled deliberately. The test job has failed on every
+          # single run since the first commit, with "Run tests" as the exact
+          # failing step — yet the same steps (mod download, go vet, go test
+          # -race -v) reproduce clean, with zero failures, in a from-scratch
+          # container on two different CPU architectures locally. The one
+          # thing that can't be reproduced locally is GitHub's own module
+          # cache, and this repo's go.mod has non-standard `replace`
+          # directives pointing at GitHub mirror repos instead of the normal
+          # module proxy — exactly the shape that can produce a stale/bad
+          # cache entry that then gets reused on every later run. If
+          # disabling this does NOT fix it, that rules this out and the
+          # actual failure text from the Actions log is needed next.
+          cache: false
 
       - name: Download Go modules
         working-directory: backend
@@ -36,11 +48,14 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        # No `|| echo` fallback: a failing test must fail the job. The repo has
-        # real tests (internal/auth, handlers, mail, redis, shortcode), so
-        # swallowing the exit code meant a broken build could still be tagged
-        # and pushed to GHCR, and then deployed by deploy.yml.
-        run: go test ./...
+        # -v: verbose per-test output, so a future failure's log is
+        # immediately diagnosable without re-running anything.
+        #
+        # No `|| echo` fallback: a failing test must fail the job. The repo
+        # has real tests (internal/auth, handlers, mail, redis, shortcode),
+        # so swallowing the exit code meant a broken build could still be
+        # tagged and pushed to GHCR, and then deployed by deploy.yml.
+        run: go test ./... -v
 
   build:
     needs: test
