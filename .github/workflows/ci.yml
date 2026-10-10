@@ -46,6 +46,29 @@ jobs:
         working-directory: backend
         run: go mod download
 
+      - name: Generate Prisma client
+        working-directory: backend
+        # ROOT CAUSE of every prior CI failure: internal/db/prisma_store.go
+        # references types (PrismaClient, NewClient, Link, User, ...) that
+        # only exist in Prisma's GENERATED output — backend/internal/db's own
+        # .gitignore excludes `*_gen.go`, so a fresh checkout never has them.
+        # Without this step, `internal/db` (and anything importing it,
+        # including cmd/api) fails to even COMPILE, not just fails tests —
+        # confirmed by cloning a fresh copy of this repo and reproducing the
+        # exact "undefined: PrismaClient" build failure locally. `go test`
+        # across the whole module still reports every OTHER package's real
+        # test results before failing overall, which is what made this easy
+        # to misread as a flaky/environment-specific test failure rather
+        # than two packages refusing to build.
+        #
+        # prefetch downloads the query-engine binary for the runner's own
+        # platform (linux/amd64 on ubuntu-latest); generate writes the client
+        # into internal/db per schema.prisma's `output = "../internal/db"`.
+        # Neither step needs a live database connection.
+        run: |
+          go run github.com/steebchen/prisma-client-go prefetch
+          go run github.com/steebchen/prisma-client-go generate
+
       - name: Run tests
         working-directory: backend
         # -v: verbose per-test output, so a future failure's log is
