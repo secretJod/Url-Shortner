@@ -89,10 +89,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        # Needed to cross-build for linux/arm64 on this amd64 GitHub runner.
+        # Without this, "Push image" below can only target the runner's own
+        # architecture, and a pull from any arm64 deploy target (e.g. an
+        # Apple Silicon Mac) fails with "no matching manifest for
+        # linux/arm64/v8" — confirmed in practice: every official base image
+        # here (postgres, redis, nginx, grafana, prometheus, golang) already
+        # ships multi-arch, so only our own image was the problem.
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build image
+        # Smoke-test build only (push: false, load: true) — confirms
+        # backend/Dockerfile still builds before anything is published.
+        # Deliberately single-platform (the runner's own amd64): `load: true`
+        # loads the result into the local Docker daemon for inspection, and
+        # a multi-platform build produces a manifest LIST rather than a
+        # single loadable image, which `load: true` cannot accept.
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -116,6 +132,12 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: true
+          # Published as a single multi-arch manifest list covering both
+          # architectures — any deploy target (amd64 VM or arm64 Apple
+          # Silicon Mac) pulls the same tag and transparently gets the right
+          # variant; nothing downstream (docker-compose.prod.yml, deploy.yml)
+          # needs to know or care which one.
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.IMAGE_NAME }}:latest
